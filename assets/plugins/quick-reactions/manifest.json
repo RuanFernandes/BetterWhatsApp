@@ -1,0 +1,8 @@
+{
+  "id": "quick-reactions",
+  "name": "Quick reactions",
+  "version": "0.1.0",
+  "description": "Adds a small reaction shortcut beside the message composer.",
+  "author": "BetterWhatsApp",
+  "entry": "index.js"
+}

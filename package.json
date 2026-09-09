@@ -1,0 +1,12 @@
+{
+  "name": "betterwhatsapp",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "prepare:wa-js": "node tools/prepare-wa-js.mjs"
+  },
+  "devDependencies": {
+    "@wppconnect/wa-js": "4.6.0"
+  }
+}
