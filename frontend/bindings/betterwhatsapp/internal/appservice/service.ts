@@ -9,6 +9,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // @ts-ignore: Unused imports
 import * as model$0 from "../model/models.js";
 
+export function CheckForUpdate(): $CancellablePromise<model$0.UpdateInfo> {
+    return $Call.ByID(748020245);
+}
+
 export function ClearPluginOverride(profileID: string, id: string): $CancellablePromise<void> {
     return $Call.ByID(2557691403, profileID, id);
 }
@@ -27,6 +31,10 @@ export function DeleteProfile(profileID: string): $CancellablePromise<void> {
 
 export function DeleteTheme(id: string): $CancellablePromise<void> {
     return $Call.ByID(1906521081, id);
+}
+
+export function DownloadUpdate(): $CancellablePromise<model$0.UpdateInfo> {
+    return $Call.ByID(510197770);
 }
 
 export function GetProfileState(profileID: string): $CancellablePromise<model$0.AppState> {

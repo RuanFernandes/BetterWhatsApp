@@ -146,6 +146,10 @@ wails3 package GOOS=windows GOARCH=amd64
 
 Cada push na branch `main` executa automaticamente o workflow Windows installer. O instalador fica disponível como artifact da execução e também é publicado como uma GitHub Release de prévia (`build-<número-da-execução>`), com o `.exe` anexado na aba **Releases**.
 
+## Atualizações
+
+O aplicativo consulta as Releases públicas do GitHub, sem exigir uma API própria ou chave de acesso. Quando uma Release Windows mais nova é encontrada, o instalador é baixado automaticamente para a pasta privada de dados do BetterWhatsApp. O app não executa o instalador sozinho: a instalação continua sendo uma ação explícita do usuário.
+
 Validação local:
 
 ~~~powershell

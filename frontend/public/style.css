@@ -2134,6 +2134,7 @@ body.standalone-surface-page textarea:focus-visible {
 }
 
 .tabs-shell {
+  position: relative;
   display: grid;
   grid-template-rows: 42px 50px minmax(0, 1fr) 34px;
   width: 100%;
@@ -2742,6 +2743,83 @@ body.standalone-surface-page textarea:focus-visible {
   cursor: progress;
 }
 
+.tabs-update-notice {
+  position: absolute;
+  z-index: 4;
+  top: 102px;
+  right: 14px;
+  display: flex;
+  width: min(430px, calc(100% - 28px));
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px 13px;
+  border: 1px solid rgba(80, 229, 139, 0.34);
+  border-radius: 8px;
+  background: rgba(8, 25, 15, 0.96);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(14px);
+}
+
+.tabs-update-notice[hidden] {
+  display: none;
+}
+
+.tabs-update-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.tabs-update-copy strong {
+  overflow: hidden;
+  color: #e8f8ed;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabs-update-copy small {
+  overflow: hidden;
+  color: #87ab92;
+  font-size: 9px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabs-update-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.tabs-update-button {
+  height: 29px;
+  padding: 0 11px;
+  border: 1px solid rgba(80, 229, 139, 0.42);
+  border-radius: 5px;
+  color: #05110a;
+  background: #50e58b;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.tabs-update-button:hover,
+.tabs-update-button:focus-visible {
+  border-color: #8af7b1;
+  background: #7bf2a5;
+  outline: none;
+}
+
+.tabs-update-button:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
 @media (max-width: 1180px) {
   .profile-tabbar-label {
     min-width: 96px;
@@ -2800,6 +2878,19 @@ body.standalone-surface-page textarea:focus-visible {
 
   .tabs-statusbar {
     padding: 0 8px;
+  }
+
+  .tabs-update-notice {
+    top: 99px;
+    right: 8px;
+    width: calc(100% - 16px);
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .tabs-update-actions {
+    justify-content: flex-end;
   }
 
   .tabs-active-summary .tabs-kicker {

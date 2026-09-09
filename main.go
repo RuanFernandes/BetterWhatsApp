@@ -26,10 +26,11 @@ import (
 	"betterwhatsapp/internal/model"
 	"betterwhatsapp/internal/plugins"
 	"betterwhatsapp/internal/themes"
+	"betterwhatsapp/internal/updater"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-const appVersion = "0.1.0-dev"
+var appVersion = "0.1.0-dev"
 
 const (
 	maxRawMessageSize  = themes.MaxSourceSize + 64*1024
@@ -223,6 +224,7 @@ func main() {
 		},
 		windows,
 		windows.OpenSurface,
+		updater.New(filepath.Join(runtimeDirectory, "updates")),
 	)
 	wailsApp.RegisterService(application.NewService(service))
 

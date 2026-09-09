@@ -81,3 +81,15 @@ type AppState struct {
 	Profiles        []ProfileInfo    `json:"profiles"`
 	ActiveProfileID string           `json:"activeProfileId"`
 }
+
+type UpdateInfo struct {
+	Available       bool   `json:"available"`
+	CurrentVersion  string `json:"currentVersion"`
+	LatestVersion   string `json:"latestVersion"`
+	ReleaseName     string `json:"releaseName"`
+	ReleaseURL      string `json:"releaseUrl"`
+	AssetName       string `json:"assetName"`
+	DownloadURL     string `json:"downloadUrl"`
+	Downloaded      bool   `json:"downloaded"`
+	DownloadedBytes int64  `json:"downloadedBytes"`
+}

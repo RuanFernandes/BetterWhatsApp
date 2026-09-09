@@ -14,6 +14,7 @@ import (
 	"betterwhatsapp/internal/model"
 	"betterwhatsapp/internal/plugins"
 	"betterwhatsapp/internal/themes"
+	"betterwhatsapp/internal/updater"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -26,6 +27,7 @@ type Service struct {
 	store    *config.Store
 	plugins  *plugins.Manager
 	themes   *themes.Manager
+	updates  UpdateOperations
 	appState string
 	reload   func() error
 	profiles ProfileOperations
@@ -38,6 +40,11 @@ type ProfileOperations interface {
 	EnsureProfile(profile model.Profile) error
 	ActivateProfile(profileID string) error
 	RemoveProfile(profileID string)
+}
+
+type UpdateOperations interface {
+	Check(context.Context, string) (updater.Release, bool, error)
+	Download(context.Context, updater.Release) (updater.Downloaded, error)
 }
 
 func New(
@@ -64,6 +71,7 @@ func NewWithReload(
 		reload,
 		nil,
 		nil,
+		nil,
 	)
 }
 
@@ -75,11 +83,13 @@ func NewWithReloadAndOperations(
 	reload func() error,
 	profileOperations ProfileOperations,
 	surfaceOpener func(string) error,
+	updateOperations UpdateOperations,
 ) *Service {
 	return &Service{
 		store:    store,
 		plugins:  pluginsManager,
 		themes:   themesManager,
+		updates:  updateOperations,
 		appState: appState,
 		reload:   reload,
 		profiles: profileOperations,
@@ -94,6 +104,50 @@ func (s *Service) GetState(ctx context.Context) (model.AppState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.stateLocked()
+}
+
+func (s *Service) CheckForUpdate(ctx context.Context) (model.UpdateInfo, error) {
+	if err := requireControlWindow(ctx); err != nil {
+		return model.UpdateInfo{}, err
+	}
+
+	operations, currentVersion, err := s.updateOperations()
+	if err != nil {
+		return model.UpdateInfo{}, err
+	}
+	release, available, err := operations.Check(ctx, currentVersion)
+	if err != nil {
+		return model.UpdateInfo{}, err
+	}
+	return makeUpdateInfo(currentVersion, release, available), nil
+}
+
+func (s *Service) DownloadUpdate(ctx context.Context) (model.UpdateInfo, error) {
+	if err := requireControlWindow(ctx); err != nil {
+		return model.UpdateInfo{}, err
+	}
+
+	operations, currentVersion, err := s.updateOperations()
+	if err != nil {
+		return model.UpdateInfo{}, err
+	}
+	release, available, err := operations.Check(ctx, currentVersion)
+	if err != nil {
+		return model.UpdateInfo{}, err
+	}
+
+	info := makeUpdateInfo(currentVersion, release, available)
+	if !available {
+		return info, nil
+	}
+
+	downloaded, err := operations.Download(ctx, release)
+	if err != nil {
+		return model.UpdateInfo{}, err
+	}
+	info.Downloaded = true
+	info.DownloadedBytes = downloaded.Size
+	return info, nil
 }
 
 func (s *Service) SetInjectorEnabled(ctx context.Context, enabled bool) error {
@@ -541,6 +595,27 @@ func (s *Service) stateFromSettings(settings model.Settings) (model.AppState, er
 		Profiles:        config.ProfileInfos(settings),
 		ActiveProfileID: settings.ActiveProfileID,
 	}, nil
+}
+
+func (s *Service) updateOperations() (UpdateOperations, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.updates == nil {
+		return nil, "", errors.New("update checker is not configured")
+	}
+	return s.updates, s.appState, nil
+}
+
+func makeUpdateInfo(currentVersion string, release updater.Release, available bool) model.UpdateInfo {
+	return model.UpdateInfo{
+		Available:      available,
+		CurrentVersion: currentVersion,
+		LatestVersion:  release.Version,
+		ReleaseName:    release.Name,
+		ReleaseURL:     release.URL,
+		AssetName:      release.AssetName,
+		DownloadURL:    release.DownloadURL,
+	}
 }
 
 func (s *Service) updateSettings(update func(*model.Settings) error) error {

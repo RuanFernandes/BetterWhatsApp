@@ -46,3 +46,15 @@ export interface ThemeInfo {
     "editable": boolean;
     "entry": string;
 }
+
+export interface UpdateInfo {
+    "available": boolean;
+    "currentVersion": string;
+    "latestVersion": string;
+    "releaseName": string;
+    "releaseUrl": string;
+    "assetName": string;
+    "downloadUrl": string;
+    "downloaded": boolean;
+    "downloadedBytes": number;
+}

@@ -2,6 +2,7 @@ import { Service } from "../bindings/betterwhatsapp/internal/appservice/index.js
 import type {
   AppState,
   ProfileInfo,
+  UpdateInfo,
 } from "../bindings/betterwhatsapp/internal/model/models.js";
 import betterWhatsAppLogo from "./assets/betterwhatsapp-logo.png";
 
@@ -60,6 +61,17 @@ root.innerHTML = `<div class="tabs-shell">
     </div>
   </section>
 
+  <aside class="tabs-update-notice" id="update-notice" hidden>
+    <div class="tabs-update-copy">
+      <span class="tabs-kicker">UPDATE CHANNEL</span>
+      <strong id="update-title">Nova versão encontrada</strong>
+      <small id="update-description">Verificando o instalador…</small>
+    </div>
+    <div class="tabs-update-actions">
+      <button class="tabs-update-button" id="update-download" type="button">Baixar agora</button>
+    </div>
+  </aside>
+
   <main class="tabs-stage" id="profile-stage">
     <div class="tabs-stage-placeholder">
       <div class="tabs-stage-mark"><img src="${betterWhatsAppLogo}" alt="" /></div>
@@ -103,6 +115,7 @@ root.innerHTML = `<div class="tabs-shell">
 
 let currentState: AppState | null = null;
 let pending = false;
+let updateDownloadPending = false;
 
 const query = <T extends Element>(selector: string): T => {
   const element = root.querySelector<T>(selector);
@@ -237,6 +250,99 @@ function renderState(nextState: AppState) {
   renderStage(profiles, nextState.activeProfileId);
 }
 
+function formatUpdateSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "";
+  }
+  return " · " + (bytes / 1024 / 1024).toFixed(1) + " MB";
+}
+
+function renderUpdate(update: UpdateInfo) {
+  const notice = query<HTMLElement>("#update-notice");
+  const title = query<HTMLElement>("#update-title");
+  const description = query<HTMLElement>("#update-description");
+  const button = query<HTMLButtonElement>("#update-download");
+
+  if (!update.available) {
+    notice.hidden = true;
+    return;
+  }
+
+  notice.hidden = false;
+  title.textContent = update.releaseName || update.latestVersion;
+  if (update.downloaded) {
+    description.textContent =
+      "Instalador baixado" + formatUpdateSize(update.downloadedBytes) + ". Feche o app e execute-o para atualizar.";
+    button.textContent = "Baixado";
+    button.disabled = true;
+    return;
+  }
+
+  description.textContent =
+    "Nova versão " + update.latestVersion + " disponível. O download pode ser iniciado agora.";
+  button.textContent = updateDownloadPending ? "Baixando…" : "Baixar agora";
+  button.disabled = updateDownloadPending;
+}
+
+async function downloadUpdate() {
+  if (updateDownloadPending) {
+    return;
+  }
+  updateDownloadPending = true;
+  const button = query<HTMLButtonElement>("#update-download");
+  button.disabled = true;
+  button.textContent = "Baixando…";
+  setStatus("Baixando atualização…");
+  try {
+    const update = await Service.DownloadUpdate();
+    renderUpdate(update);
+    setStatus(
+      update.downloaded
+        ? "Atualização baixada · pronta para instalar"
+        : "Nenhuma atualização disponível",
+      update.downloaded ? "success" : "neutral",
+    );
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "Tentar novamente";
+    setStatus(error instanceof Error ? error.message : String(error), "error");
+  } finally {
+    updateDownloadPending = false;
+  }
+}
+
+async function checkForUpdate() {
+  try {
+    const update = await Service.CheckForUpdate();
+    renderUpdate(update);
+    if (!update.available) {
+      return;
+    }
+
+    updateDownloadPending = true;
+    renderUpdate(update);
+    setStatus("Atualização encontrada · baixando…");
+    const downloaded = await Service.DownloadUpdate();
+    renderUpdate(downloaded);
+    setStatus(
+      downloaded.downloaded
+        ? "Atualização baixada · pronta para instalar"
+        : "Atualização disponível",
+      "success",
+    );
+  } catch (error) {
+    const button = query<HTMLButtonElement>("#update-download");
+    const notice = query<HTMLElement>("#update-notice");
+    if (!notice.hidden) {
+      button.disabled = false;
+      button.textContent = "Tentar novamente";
+    }
+    console.info("[BetterWhatsApp] update check skipped", error);
+  } finally {
+    updateDownloadPending = false;
+  }
+}
+
 async function refreshState() {
   currentState = await Service.GetState();
   renderState(currentState);
@@ -348,13 +454,21 @@ function bindShellActions() {
   });
 }
 
+function bindUpdateActions() {
+  query<HTMLButtonElement>("#update-download").addEventListener("click", () => {
+    void downloadUpdate();
+  });
+}
+
 async function mount() {
   bindFrame();
   bindProfileDialog();
   bindShellActions();
+  bindUpdateActions();
   try {
     await refreshState();
     setStatus("Perfis isolados prontos", "success");
+    void checkForUpdate();
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error), "error");
   }

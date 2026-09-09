@@ -85,7 +85,7 @@ jobs:
         run: wails3 generate bindings -ts -i -clean=true
 
       - name: Build Windows installer
-        run: wails3 package GOOS=windows GOARCH=amd64
+        run: wails3 package GOOS=windows GOARCH=amd64 APP_VERSION=build-${{ github.run_number }}
 
       - name: Locate installer
         id: installer
