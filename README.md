@@ -4,6 +4,7 @@
 ![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white)
 ![Wails](https://img.shields.io/badge/Wails-3%20alpha-50e58b?style=flat-square)
 ![Frontend](https://img.shields.io/badge/frontend-TypeScript%20%2B%20Vite-3178C6?style=flat-square&logo=typescript&logoColor=white)
+[![Windows installer](https://github.com/RuanFernandes/BetterWhatsApp/actions/workflows/windows-installer.yml/badge.svg)](https://github.com/RuanFernandes/BetterWhatsApp/actions/workflows/windows-installer.yml)
 
 Uma shell desktop extensível para o WhatsApp Web, construída com Wails 3, Go, TypeScript, Vite e WebView2.
 
@@ -136,6 +137,14 @@ wails3 build
 ~~~
 
 O executável Windows é gerado em bin/betterwhatsapp.exe.
+
+Para gerar o instalador NSIS localmente:
+
+~~~powershell
+wails3 package GOOS=windows GOARCH=amd64
+~~~
+
+Cada push na branch main executa automaticamente o workflow Windows installer. O instalador fica disponível como artifact na execução do GitHub Actions.
 
 Validação local:
 

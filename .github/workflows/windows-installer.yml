@@ -1,0 +1,93 @@
+name: Windows installer
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.25.x"
+  NODE_VERSION: "20.x"
+  WAILS_VERSION: "v3.0.0-alpha2.117"
+
+jobs:
+  build-installer:
+    name: Build NSIS installer
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis --no-progress --yes
+
+      - name: Install Wails 3 CLI
+        shell: pwsh
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
+          $goBin = Join-Path (go env GOPATH) "bin"
+          $goBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & (Join-Path $goBin "wails3.exe") version
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Prepare local WA-JS bundle
+        run: npm run prepare:wa-js
+
+      - name: Generate Wails bindings
+        run: wails3 generate bindings -ts -i -clean=true
+
+      - name: Build Windows installer
+        run: wails3 package GOOS=windows GOARCH=amd64
+
+      - name: Locate installer
+        id: installer
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path "bin", "build/windows/nsis" -Filter "*-installer.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+
+          if ($null -eq $installer) {
+            throw "Nenhum instalador NSIS foi encontrado."
+          }
+
+          "path=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "name=$($installer.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "Encontrado: $($installer.FullName)"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BetterWhatsApp-windows-installer
+          path: ${{ steps.installer.outputs.path }}
+          if-no-files-found: error
+          retention-days: 14
