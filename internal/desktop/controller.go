@@ -21,7 +21,7 @@ import (
 const (
 	remoteOrigin       = "https://web.whatsapp.com"
 	whatsappWindowName = "whatsapp"
-	profileHostTop     = 92
+	profileHostTop     = 92 // CSS px/DIP: 42px titlebar + 50px profile bar.
 	profileBootstrapXY = -32000
 )
 
@@ -47,6 +47,7 @@ type Controller struct {
 	window       *application.WebviewWindow
 	surfaces     map[string]*application.WebviewWindow
 	shell        bool
+	profileHost  uintptr
 
 	runtimeDirectory      string
 	profiles              map[string]*profileRuntime
@@ -92,6 +93,7 @@ func (c *Controller) CreateShellWindow(settings model.Settings) error {
 	}
 	if c.window != nil {
 		wasVisible := c.window.IsVisible()
+		c.destroyProfileHostLocked()
 		c.closeForReplacementLocked(c.window)
 		options.Hidden = !wasVisible
 	}
@@ -102,6 +104,7 @@ func (c *Controller) CreateShellWindow(settings model.Settings) error {
 	}
 	c.window = window
 	c.shell = true
+	c.profileHost = 0
 	c.installCloseToTrayHook(window)
 	window.OnWindowEvent(events.Common.WindowDidResize, func(_ *application.WindowEvent) {
 		c.resizeEmbeddedProfiles()
@@ -131,6 +134,7 @@ func (c *Controller) createRemoteWindow(settings model.Settings, hidden bool) er
 	options := c.remoteWindowOptions(settings, script, hidden)
 	if c.window != nil {
 		wasVisible := c.window.IsVisible()
+		c.destroyProfileHostLocked()
 		c.closeForReplacementLocked(c.window)
 		c.window = nil
 		if !hidden {
@@ -144,6 +148,7 @@ func (c *Controller) createRemoteWindow(settings model.Settings, hidden bool) er
 	}
 	c.window = window
 	c.shell = false
+	c.profileHost = 0
 	if !hidden {
 		c.installCloseToTrayHook(window)
 	}
@@ -347,7 +352,8 @@ func (c *Controller) ActivateProfile(profileID string) error {
 	for id, runtime := range c.profiles {
 		setEmbeddedProfileVisibility(runtime.hwnd, id == profileID)
 	}
-	focusEmbeddedProfileWindow(target.hwnd)
+	c.resizeProfileHostLocked()
+	activateEmbeddedProfileWindow(c.windowHandleLocked(), target.hwnd)
 	return nil
 }
 
@@ -424,8 +430,16 @@ func (c *Controller) launchProfile(profile model.Profile, runtimeDirectory strin
 		_ = command.Wait()
 		return nil, fmt.Errorf("wait for profile %q window: %w", profile.ID, err)
 	}
+	c.mu.Lock()
+	hostHandle := c.profileHost
+	c.mu.Unlock()
+	if hostHandle == 0 {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return nil, errors.New("isolated profile host is not ready")
+	}
 	width, height := c.profileBounds()
-	if err := embedProfileWindow(hwnd, parentHandle, 0, profileHostTop, width, height); err != nil {
+	if err := embedProfileWindow(hwnd, hostHandle, 0, 0, width, height); err != nil {
 		_ = command.Process.Kill()
 		_ = command.Wait()
 		return nil, fmt.Errorf("embed profile %q window: %w", profile.ID, err)
@@ -456,16 +470,54 @@ func (c *Controller) watchProfile(runtime *profileRuntime) {
 
 func (c *Controller) waitForShellHandle(timeout time.Duration) (uintptr, error) {
 	deadline := time.Now().Add(timeout)
+	var lastErr error
 	for time.Now().Before(deadline) {
 		c.mu.Lock()
 		handle := c.windowHandleLocked()
-		c.mu.Unlock()
 		if handle != 0 {
-			return handle, nil
+			if err := c.ensureProfileHostLocked(); err == nil {
+				c.mu.Unlock()
+				return handle, nil
+			} else {
+				lastErr = err
+			}
 		}
+		c.mu.Unlock()
 		time.Sleep(50 * time.Millisecond)
 	}
+	if lastErr != nil {
+		return 0, lastErr
+	}
 	return 0, errors.New("BetterWhatsApp shell native window did not become ready")
+}
+
+func (c *Controller) ensureProfileHostLocked() error {
+	if c.profileHost != 0 {
+		return nil
+	}
+	parent := c.windowHandleLocked()
+	if parent == 0 {
+		return errors.New("BetterWhatsApp shell native window is not ready")
+	}
+	host, err := createProfileHost(parent)
+	if err != nil {
+		return fmt.Errorf("create isolated profile host: %w", err)
+	}
+	c.profileHost = host
+	if err := resizeProfileHost(host, parent, profileHostTop); err != nil {
+		destroyProfileHost(host)
+		c.profileHost = 0
+		return fmt.Errorf("size isolated profile host: %w", err)
+	}
+	return nil
+}
+
+func (c *Controller) destroyProfileHostLocked() {
+	if c.profileHost == 0 {
+		return
+	}
+	destroyProfileHost(c.profileHost)
+	c.profileHost = 0
 }
 
 func (c *Controller) windowHandleLocked() uintptr {
@@ -483,32 +535,46 @@ func (c *Controller) profileBounds() (int, int) {
 
 func (c *Controller) profileBoundsLocked() (int, int) {
 	width, height := 1280, 800
-	if c.window != nil {
+	if c.profileHost != 0 {
+		if hostWidth, hostHeight, ok := profileHostClientSize(c.profileHost); ok {
+			width, height = hostWidth, hostHeight
+		}
+	} else if c.window != nil {
 		width, height = c.window.Size()
 	}
 	if width < 1 {
 		width = 1280
 	}
-	if height < profileHostTop+1 {
-		height = profileHostTop + 1
+	if height < 1 {
+		height = 1
 	}
-	return width, height - profileHostTop
+	return width, height
 }
 
 func (c *Controller) resizeEmbeddedProfiles() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.resizeProfileHostLocked()
 	for _, runtime := range c.profiles {
 		c.resizeEmbeddedProfileLocked(runtime)
 	}
 }
 
 func (c *Controller) resizeEmbeddedProfileLocked(runtime *profileRuntime) {
-	if runtime == nil || c.window == nil {
+	if runtime == nil || c.window == nil || c.profileHost == 0 {
 		return
 	}
 	width, height := c.profileBoundsLocked()
-	_ = resizeEmbeddedProfileWindow(runtime.hwnd, c.windowHandleLocked(), 0, profileHostTop, width, height)
+	_ = resizeEmbeddedProfileWindow(runtime.hwnd, c.profileHost, 0, 0, width, height)
+}
+
+func (c *Controller) resizeProfileHostLocked() {
+	if c.window == nil || c.profileHost == 0 {
+		return
+	}
+	if err := resizeProfileHost(c.profileHost, c.windowHandleLocked(), profileHostTop); err != nil {
+		logDesktop("resize isolated profile host failed: %v", err)
+	}
 }
 
 func (c *Controller) setProfileDefinitions(settings model.Settings) {
@@ -550,6 +616,9 @@ func newProfileToken() (string, error) {
 func (c *Controller) Quit() {
 	c.closeAllowed.Store(true)
 	c.stopAllProfiles()
+	c.mu.Lock()
+	c.destroyProfileHostLocked()
+	c.mu.Unlock()
 	c.app.Quit()
 }
 

@@ -17,21 +17,28 @@ import (
 const (
 	wmCopyData = 0x004A
 
-	wsChild       = 0x40000000
-	wsPopup       = 0x80000000
-	wsCaption     = 0x00C00000
-	wsThickFrame  = 0x00040000
-	wsSysMenu     = 0x00080000
-	wsMinimiseBox = 0x00020000
-	wsMaximiseBox = 0x00010000
-	wsOverlapped  = 0x00CF0000
-	wsExAppWindow = 0x00040000
+	wsChild        = 0x40000000
+	wsClipChildren = 0x02000000
+	wsClipSiblings = 0x04000000
+	wsVisible      = 0x10000000
+	wsPopup        = 0x80000000
+	wsCaption      = 0x00C00000
+	wsThickFrame   = 0x00040000
+	wsSysMenu      = 0x00080000
+	wsMinimiseBox  = 0x00020000
+	wsMaximiseBox  = 0x00010000
+	wsOverlapped   = 0x00CF0000
+	wsExAppWindow  = 0x00040000
 
-	swpNoActivate   = 0x0010
-	swpFrameChanged = 0x0020
-	swHide          = 0
-	swShow          = 5
-	createNoWindow  = 0x08000000
+	swpNoSize        = 0x0001
+	swpNoMove        = 0x0002
+	swpNoActivate    = 0x0010
+	swpShowWindow    = 0x0040
+	swpNoOwnerZOrder = 0x0200
+	swpFrameChanged  = 0x0020
+	swHide           = 0
+	swShow           = 5
+	createNoWindow   = 0x08000000
 )
 
 type copyDataStruct struct {
@@ -44,9 +51,13 @@ var profileUser32 = syscall.NewLazyDLL("user32.dll")
 var profileKernel32 = syscall.NewLazyDLL("kernel32.dll")
 
 var (
+	createWindowExProc       = profileUser32.NewProc("CreateWindowExW")
+	destroyWindowProc        = profileUser32.NewProc("DestroyWindow")
 	enumWindowsProc          = profileUser32.NewProc("EnumWindows")
 	getWindowThreadProcessID = profileUser32.NewProc("GetWindowThreadProcessId")
 	getClassNameProc         = profileUser32.NewProc("GetClassNameW")
+	getClientRectProc        = profileUser32.NewProc("GetClientRect")
+	getDpiForWindowProc      = profileUser32.NewProc("GetDpiForWindow")
 	getWindowLongPtr         = profileUser32.NewProc("GetWindowLongPtrW")
 	setWindowLongPtr         = profileUser32.NewProc("SetWindowLongPtrW")
 	setParentProc            = profileUser32.NewProc("SetParent")
@@ -56,14 +67,136 @@ var (
 	isWindowVisibleProc      = profileUser32.NewProc("IsWindowVisible")
 	setForegroundWindowProc  = profileUser32.NewProc("SetForegroundWindow")
 	sendMessageProc          = profileUser32.NewProc("SendMessageW")
+	getModuleHandleProc      = profileKernel32.NewProc("GetModuleHandleW")
 	moveMemoryProc           = profileKernel32.NewProc("RtlMoveMemory")
 )
+
+type profileRect struct {
+	left   int32
+	top    int32
+	right  int32
+	bottom int32
+}
 
 var profileVisibilityMu sync.Mutex
 var profileVisibilityGeneration = make(map[uintptr]uint64)
 
 func profileHostSupported() bool {
 	return true
+}
+
+func createProfileHost(parent uintptr) (uintptr, error) {
+	if parent == 0 {
+		return 0, errors.New("shell native window is unavailable")
+	}
+	className, err := syscall.UTF16PtrFromString("STATIC")
+	if err != nil {
+		return 0, fmt.Errorf("encode profile host class: %w", err)
+	}
+	module, _, _ := getModuleHandleProc.Call(0)
+	hwnd, _, callErr := createWindowExProc.Call(
+		0,
+		uintptr(unsafe.Pointer(className)),
+		0,
+		uintptr(wsChild|wsClipChildren|wsClipSiblings|wsVisible),
+		0,
+		0,
+		0,
+		0,
+		parent,
+		0,
+		module,
+		0,
+	)
+	if hwnd == 0 {
+		if callErr != syscall.Errno(0) {
+			return 0, fmt.Errorf("CreateWindowExW failed: %w", callErr)
+		}
+		return 0, errors.New("CreateWindowExW failed")
+	}
+	return hwnd, nil
+}
+
+func destroyProfileHost(hwnd uintptr) {
+	if hwnd != 0 {
+		_, _, _ = destroyWindowProc.Call(hwnd)
+	}
+}
+
+func resizeProfileHost(hwnd, parent uintptr, headerDip int) error {
+	if hwnd == 0 || parent == 0 {
+		return errors.New("profile host or shell native window is unavailable")
+	}
+	width, height, ok := profileWindowClientSize(parent)
+	if !ok || width < 1 || height < 1 {
+		return errors.New("shell client size is invalid")
+	}
+	header := dipToPhysical(headerDip, profileWindowDPI(parent))
+	if header < 0 {
+		header = 0
+	}
+	if header >= height {
+		header = height - 1
+	}
+	return setProfileWindowPosition(hwnd, 0, header, width, height-header, swpNoActivate|swpNoOwnerZOrder|swpShowWindow|swpFrameChanged)
+}
+
+func profileHostClientSize(hwnd uintptr) (int, int, bool) {
+	return profileWindowClientSize(hwnd)
+}
+
+func profileWindowClientSize(hwnd uintptr) (int, int, bool) {
+	if hwnd == 0 {
+		return 0, 0, false
+	}
+	var rect profileRect
+	result, _, _ := getClientRectProc.Call(hwnd, uintptr(unsafe.Pointer(&rect)))
+	if result == 0 {
+		return 0, 0, false
+	}
+	width := int(rect.right - rect.left)
+	height := int(rect.bottom - rect.top)
+	return width, height, width > 0 && height > 0
+}
+
+func profileWindowDPI(hwnd uintptr) uint32 {
+	if hwnd == 0 {
+		return 96
+	}
+	dpi, _, _ := getDpiForWindowProc.Call(hwnd)
+	if dpi == 0 {
+		return 96
+	}
+	return uint32(dpi)
+}
+
+func dipToPhysical(value int, dpi uint32) int {
+	if value <= 0 {
+		return value
+	}
+	return int((int64(value)*int64(dpi) + 48) / 96)
+}
+
+func setProfileWindowPosition(hwnd uintptr, x, y, width, height, flags int) error {
+	if hwnd == 0 || width < 1 || height < 1 {
+		return errors.New("profile window size is invalid")
+	}
+	result, _, callErr := setWindowPosProc.Call(
+		hwnd,
+		0,
+		uintptr(x),
+		uintptr(y),
+		uintptr(width),
+		uintptr(height),
+		uintptr(flags),
+	)
+	if result == 0 {
+		if callErr != syscall.Errno(0) {
+			return fmt.Errorf("SetWindowPos failed: %w", callErr)
+		}
+		return errors.New("SetWindowPos failed")
+	}
+	return nil
 }
 
 func startProfileProcess(executable, profileID string, parentHandle uintptr, token string) (*exec.Cmd, error) {
@@ -188,23 +321,7 @@ func resizeEmbeddedProfileWindow(hwnd, parent uintptr, x, y, width, height int) 
 	if width < 1 || height < 1 {
 		return errors.New("profile window size is invalid")
 	}
-	flags := uintptr(swpNoActivate | swpFrameChanged)
-	result, _, callErr := setWindowPosProc.Call(
-		hwnd,
-		0,
-		uintptr(x),
-		uintptr(y),
-		uintptr(width),
-		uintptr(height),
-		flags,
-	)
-	if result == 0 {
-		if callErr != syscall.Errno(0) {
-			return fmt.Errorf("SetWindowPos failed: %w", callErr)
-		}
-		return errors.New("SetWindowPos failed")
-	}
-	return nil
+	return setProfileWindowPosition(hwnd, x, y, width, height, swpNoActivate|swpNoOwnerZOrder|swpShowWindow|swpFrameChanged)
 }
 
 func getWindowLongPtrValue(hwnd uintptr, index int32) uintptr {
@@ -267,9 +384,15 @@ func isProfileVisibilityGenerationCurrent(hwnd uintptr, generation uint64) bool 
 	return profileVisibilityGeneration[hwnd] == generation
 }
 
-func focusEmbeddedProfileWindow(hwnd uintptr) {
+func activateEmbeddedProfileWindow(parent, hwnd uintptr) {
+	if parent != 0 {
+		// Keep the shell active so its custom frame remains painted and owns the
+		// drag/resize hit testing. Raise the foreign-process child without
+		// activating it.
+		_, _, _ = setForegroundWindowProc.Call(parent)
+	}
 	if hwnd != 0 {
-		_, _, _ = setForegroundWindowProc.Call(hwnd)
+		_ = setProfileWindowPosition(hwnd, 0, 0, 1, 1, swpNoMove|swpNoSize|swpNoActivate|swpShowWindow)
 	}
 }
 
