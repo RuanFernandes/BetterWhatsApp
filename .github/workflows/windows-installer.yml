@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: windows-installer-${{ github.ref }}
@@ -108,3 +108,30 @@ jobs:
           path: ${{ steps.installer.outputs.path }}
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: build-${{ github.run_number }}
+          RELEASE_TITLE: "BetterWhatsApp build #${{ github.run_number }}"
+          RELEASE_NOTES: |
+            Instalador Windows gerado automaticamente a partir do commit ${{ github.sha }}.
+            Este build é uma prévia contínua da branch main.
+          INSTALLER_PATH: ${{ steps.installer.outputs.path }}
+        run: |
+          $releaseArguments = @(
+            $env:RELEASE_TAG
+            $env:INSTALLER_PATH
+            "--repo"
+            $env:GITHUB_REPOSITORY
+            "--target"
+            $env:GITHUB_SHA
+            "--title"
+            $env:RELEASE_TITLE
+            "--notes"
+            $env:RELEASE_NOTES
+            "--prerelease"
+          )
+
+          gh release create @releaseArguments

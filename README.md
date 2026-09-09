@@ -144,7 +144,7 @@ Para gerar o instalador NSIS localmente:
 wails3 package GOOS=windows GOARCH=amd64
 ~~~
 
-Cada push na branch main executa automaticamente o workflow Windows installer. O instalador fica disponível como artifact na execução do GitHub Actions.
+Cada push na branch `main` executa automaticamente o workflow Windows installer. O instalador fica disponível como artifact da execução e também é publicado como uma GitHub Release de prévia (`build-<número-da-execução>`), com o `.exe` anexado na aba **Releases**.
 
 Validação local:
 
