@@ -666,7 +666,7 @@ func (c *Controller) remoteWindowOptions(settings model.Settings, script string,
 			application.PermissionMicrophone:    application.PermissionDefault,
 			application.PermissionCamera:        application.PermissionDefault,
 			application.PermissionNotifications: application.PermissionDefault,
-			application.PermissionClipboardRead: application.PermissionDefault,
+			application.PermissionClipboardRead: application.PermissionAllow,
 		},
 	}
 }

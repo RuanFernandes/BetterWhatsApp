@@ -68,6 +68,250 @@
     return () => observer.disconnect();
   };
 
+  const installImagePasteSupport = () => {
+    let syntheticPasteDispatch = false;
+
+    const isVisible = (element) => {
+      if (!(element instanceof HTMLElement)) {
+        return false;
+      }
+      const styles = window.getComputedStyle(element);
+      return (
+        styles.display !== "none" &&
+        styles.visibility !== "hidden" &&
+        element.getClientRects().length > 0
+      );
+    };
+
+    const isMessageComposer = (element) => {
+      if (
+        !(element instanceof Element) ||
+        !element.matches('[contenteditable="true"]')
+      ) {
+        return false;
+      }
+
+      if (element.getAttribute("data-tab") === "10") {
+        return true;
+      }
+
+      if (
+        element.closest(
+          "footer, [data-testid='conversation-compose-box-input'], [data-testid='conversation-compose-footer']",
+        )
+      ) {
+        return true;
+      }
+
+      const marker = [
+        element.getAttribute("aria-label"),
+        element.getAttribute("aria-placeholder"),
+        element.getAttribute("data-placeholder"),
+        element.getAttribute("title"),
+        element.getAttribute("role"),
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+      return /mensagem|message|digite.*mensagem|type.*message/i.test(marker);
+    };
+
+    const resolveMessageComposer = (target) => {
+      const candidates = [];
+      const addCandidate = (element) => {
+        if (element && !candidates.includes(element)) {
+          candidates.push(element);
+        }
+      };
+
+      if (target instanceof Element) {
+        addCandidate(target.closest('[contenteditable="true"]'));
+      }
+      if (document.activeElement instanceof Element) {
+        addCandidate(
+          document.activeElement.closest('[contenteditable="true"]'),
+        );
+      }
+      document
+        .querySelectorAll('[contenteditable="true"]')
+        .forEach(addCandidate);
+
+      return (
+        candidates.find(
+          (element) => isVisible(element) && isMessageComposer(element),
+        ) || null
+      );
+    };
+
+    const getImageFromClipboardData = (clipboardData) => {
+      if (!clipboardData) {
+        return null;
+      }
+
+      const items = clipboardData.items
+        ? Array.from(clipboardData.items)
+        : [];
+      for (const item of items) {
+        if (item.kind !== "file" || !/^image\//i.test(item.type || "")) {
+          continue;
+        }
+        const file = item.getAsFile?.();
+        if (file) {
+          return file;
+        }
+      }
+
+      const files = clipboardData.files
+        ? Array.from(clipboardData.files)
+        : [];
+      return files.find((file) => /^image\//i.test(file.type || "")) || null;
+    };
+
+    const readImageFromClipboard = async () => {
+      if (
+        !navigator.clipboard ||
+        typeof navigator.clipboard.read !== "function"
+      ) {
+        return null;
+      }
+
+      const clipboardItems = await navigator.clipboard.read();
+      for (const item of clipboardItems) {
+        const imageType = item.types.find((type) =>
+          /^image\//i.test(type),
+        );
+        if (!imageType) {
+          continue;
+        }
+
+        const blob = await item.getType(imageType);
+        if (!blob) {
+          continue;
+        }
+
+        const mimeType = blob.type || imageType;
+        const extension =
+          mimeType.split("/")[1]?.replace(/[^a-z0-9]/gi, "") || "png";
+        if (typeof File === "function") {
+          return new File(
+            [blob],
+            "betterwhatsapp-pasted-image." + extension,
+            { type: mimeType },
+          );
+        }
+        return blob;
+      }
+
+      return null;
+    };
+
+    const createPasteEvent = (file) => {
+      if (typeof DataTransfer !== "function") {
+        return null;
+      }
+
+      const transfer = new DataTransfer();
+      try {
+        transfer.items.add(file);
+      } catch {
+        return null;
+      }
+
+      let pasteEvent;
+      try {
+        pasteEvent = new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: transfer,
+        });
+      } catch {
+        pasteEvent = new Event("paste", {
+          bubbles: true,
+          cancelable: true,
+        });
+      }
+
+      try {
+        Object.defineProperty(pasteEvent, "clipboardData", {
+          configurable: true,
+          value: transfer,
+        });
+      } catch {
+        // ClipboardEvent already exposed a read-only data transfer.
+      }
+      return pasteEvent;
+    };
+
+    const dispatchImagePaste = (composer, file) => {
+      const pasteEvent = createPasteEvent(file);
+      if (!pasteEvent) {
+        return false;
+      }
+
+      try {
+        composer.focus({ preventScroll: true });
+      } catch {
+        composer.focus();
+      }
+
+      syntheticPasteDispatch = true;
+      try {
+        composer.dispatchEvent(pasteEvent);
+        return true;
+      } finally {
+        syntheticPasteDispatch = false;
+      }
+    };
+
+    document.addEventListener(
+      "paste",
+      (event) => {
+        if (syntheticPasteDispatch || event.isTrusted === false) {
+          return;
+        }
+
+        const composer = resolveMessageComposer(event.target);
+        if (!composer) {
+          return;
+        }
+
+        const directImage = getImageFromClipboardData(event.clipboardData);
+        if (directImage) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          if (!dispatchImagePaste(composer, directImage)) {
+            log("could not dispatch clipboard image to WhatsApp");
+          }
+          return;
+        }
+
+        const items = event.clipboardData?.items
+          ? Array.from(event.clipboardData.items)
+          : [];
+        if (
+          items.some((item) => item.kind === "string") ||
+          !navigator.clipboard ||
+          typeof navigator.clipboard.read !== "function"
+        ) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void readImageFromClipboard()
+          .then((file) => {
+            if (file && !dispatchImagePaste(composer, file)) {
+              log("could not dispatch clipboard fallback to WhatsApp");
+            }
+          })
+          .catch((error) => {
+            log("clipboard image fallback failed", error);
+          });
+      },
+      true,
+    );
+  };
+
   const installWailsBridgeGuard = () => {
     let nativePostMessage = null;
     const maxThemeMessageLength = 2 * 1024 * 1024 + 64 * 1024;
@@ -685,6 +929,8 @@
     log("injector disabled");
     return;
   }
+
+  installImagePasteSupport();
 
   const themes = Array.isArray(payload.themes) ? payload.themes : [];
   const plugins = Array.isArray(payload.plugins) ? payload.plugins : [];
