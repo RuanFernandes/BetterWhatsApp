@@ -190,7 +190,7 @@ func main() {
 				if windows == nil {
 					return errors.New("WhatsApp window controller is not initialized")
 				}
-				return windows.ReloadWhatsApp()
+				return windows.ReloadWhatsApp(store.Snapshot())
 			}, func(surface string) error {
 				if windows == nil {
 					return errors.New("WhatsApp window controller is not initialized")
@@ -227,7 +227,7 @@ func main() {
 			if windows == nil {
 				return errors.New("WhatsApp window controller is not initialized")
 			}
-			return windows.ReloadWhatsApp()
+			return windows.ReloadWhatsApp(store.Snapshot())
 		},
 		windows,
 		windows.OpenSurface,

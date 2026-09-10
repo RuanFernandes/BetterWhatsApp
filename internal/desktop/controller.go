@@ -128,25 +128,65 @@ func (c *Controller) HandleWindowCommand(command string) error {
 	}
 }
 
-// ReloadWhatsApp never blocks the caller on WebView2. Wails' Reload method is
-// synchronous internally, so it must stay outside the service/message thread.
-func (c *Controller) ReloadWhatsApp() error {
+// ReloadWhatsApp rebuilds the remote window so the Wails JS payload reflects
+// the current plugin/theme settings. Reloading the existing WebView would
+// execute the JS captured when that window was created.
+func (c *Controller) ReloadWhatsApp(settings model.Settings) error {
 	if c == nil || c.closing.Load() {
 		return errors.New("BetterWhatsApp controller is shutting down")
 	}
 	if !c.reloadQueued.CompareAndSwap(false, true) {
 		return nil
 	}
+	script, err := c.injector(settings)
+	if err != nil {
+		c.reloadQueued.Store(false)
+		return fmt.Errorf("build WhatsApp injector: %w", err)
+	}
+
 	c.mu.Lock()
 	window := c.window
+	hwnd := c.windowHandleLocked()
+	visible := hwnd == 0 || nativeWindowVisible(hwnd)
+	c.window = nil
 	c.mu.Unlock()
 	if window == nil {
 		c.reloadQueued.Store(false)
 		return errors.New("BetterWhatsApp window is not initialized")
 	}
+
 	go func() {
 		defer c.reloadQueued.Store(false)
-		window.Reload()
+
+		previousCloseAllowed := c.closeAllowed.Load()
+		c.closeAllowed.Store(true)
+		window.Close()
+		c.closeAllowed.Store(previousCloseAllowed)
+
+		if c.closing.Load() {
+			return
+		}
+
+		options := remoteWindowOptions(settings, script)
+		options.Hidden = !visible
+		replacement := c.app.Window.NewWithOptions(options)
+		if replacement == nil {
+			logDesktop("recreate WhatsApp window after settings change failed")
+			return
+		}
+
+		c.mu.Lock()
+		if c.closing.Load() {
+			c.mu.Unlock()
+			previousCloseAllowed := c.closeAllowed.Load()
+			c.closeAllowed.Store(true)
+			replacement.Close()
+			c.closeAllowed.Store(previousCloseAllowed)
+			return
+		}
+		c.window = replacement
+		c.mu.Unlock()
+		c.installCloseToTrayHook(replacement)
 	}()
 	return nil
 }

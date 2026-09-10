@@ -55,17 +55,44 @@
   };
 
   const observe = (selector, callback) => {
-    const observer = new MutationObserver(() => {
+    let observer = null;
+    let scheduled = false;
+
+    const notify = () => {
+      scheduled = false;
       const element = document.querySelector(selector);
       if (element) {
         callback(element);
       }
-    });
-    observer.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-    });
-    return () => observer.disconnect();
+    };
+
+    const schedule = () => {
+      if (scheduled) {
+        return;
+      }
+      scheduled = true;
+      window.queueMicrotask(notify);
+    };
+
+    const attach = () => {
+      const root = document.documentElement || document.body;
+      if (!root) {
+        return false;
+      }
+      observer = new MutationObserver(schedule);
+      observer.observe(root, {
+        childList: true,
+        subtree: true,
+      });
+      notify();
+      return true;
+    };
+
+    if (!attach()) {
+      document.addEventListener("DOMContentLoaded", attach, { once: true });
+    }
+
+    return () => observer?.disconnect();
   };
 
   const installImagePasteSupport = () => {

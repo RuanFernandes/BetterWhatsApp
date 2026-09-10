@@ -22,7 +22,13 @@ BetterWhatsApp.registerPlugin("quick-reactions", ({ addStyle, observe, log }) =>
     ].join("\n"),
   );
 
-  observe("[contenteditable='true']", (composer) => {
+  const composerSelector = [
+    "[data-tab='10'][contenteditable='true']",
+    "footer [contenteditable='true']",
+    "[data-testid='conversation-compose-box-input'] [contenteditable='true']",
+    "[data-testid='conversation-compose-footer'] [contenteditable='true']",
+  ].join(", ");
+  observe(composerSelector, (composer) => {
     const parent = composer.parentElement;
     if (!parent || parent.querySelector("[data-better-whatsapp='quick-reactions']")) {
       return;
