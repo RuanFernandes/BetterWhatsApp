@@ -8,7 +8,7 @@
 
 Uma shell desktop extensível para o WhatsApp Web, construída com Wails 3, Go, TypeScript, Vite e WebView2.
 
-O BetterWhatsApp adiciona uma camada local de controle sobre o WhatsApp Web: frame próprio, tray, perfis isolados, temas CSS globais, plugins JavaScript, editor Monaco e uma separação explícita entre conteúdo remoto e serviços nativos.
+O BetterWhatsApp adiciona uma camada local de controle sobre o WhatsApp Web: frame próprio, tray, uma sessão única, temas CSS globais, plugins JavaScript, editor Monaco e uma separação explícita entre conteúdo remoto e serviços nativos.
 
 > **Status:** experimental. É um laboratório funcional e ainda não deve ser tratado como software estável para uso crítico.
 
@@ -16,32 +16,23 @@ O projeto não é afiliado, patrocinado ou endossado pelo WhatsApp, Meta ou WPPC
 
 ## Visão geral
 
-O WhatsApp Web roda em uma WebView2 remota, enquanto a coordenação sensível fica no host local em Go. Cada perfil possui processo, diretório de dados e runtime de injeção próprios.
-
-Isso permite criar perfis como:
-
-- **Pessoal**
-- **Emprego**
-- **Projetos**
-- **Atendimento**
-
-Cada perfil mantém login, cookies, cache, IndexedDB, plugins efetivos e temas sem compartilhar estado com os demais.
+O WhatsApp Web roda em uma única WebView2 remota, enquanto a coordenação sensível fica no host local em Go. Login, cookies, cache e IndexedDB pertencem a uma sessão única e estável.
 
 ## Funcionalidades
 
 - Shell local frameless com frame desenhado no frontend.
 - WhatsApp Web carregado diretamente de https://web.whatsapp.com.
-- Tabs com processos independentes e WebViewUserDataPath exclusivo.
+- Uma única sessão persistente do WhatsApp Web, sem processos filhos ou tabs de perfis.
 - Tray com mostrar/ocultar e fechamento definitivo pelo menu de contexto.
 - Ícone alternativo e som para novas mensagens quando o app está oculto.
 - Contagem de mensagens não lidas sem incluir chats arquivados.
 - WA-JS/WPPConnect empacotado localmente, sem download de JavaScript na inicialização.
-- Plugins JavaScript com estado global e override por perfil.
+- Plugins JavaScript com estado global.
 - Temas CSS globais editados com Monaco.
 - Superfícies dedicadas para Control, Plugins e Themes.
 - Documentação da API de plugins dentro da aplicação.
 - Abertura do projeto de um plugin diretamente no VS Code.
-- Instância única do host e IPC validado entre host e perfis.
+- Instância única do host e mensagens nativas allowlisted entre a WebView remota e o host.
 
 ## Arquitetura
 
@@ -49,18 +40,13 @@ Cada perfil mantém login, cookies, cache, IndexedDB, plugins efetivos e temas s
 BetterWhatsApp
 ├── Host Wails + Go
 │   ├── shell frameless
-│   ├── frame, tabs e ações locais
+│   ├── frame, navbar e ações locais
 │   ├── configuração persistida atomicamente
 │   ├── tray e notificações
 │   └── AppService com métodos allowlisted
 │
-├── Processo de perfil: Pessoal
-│   └── WebView2 UserDataPath próprio
-│       └── WhatsApp Web + WA-JS + plugins + temas
-│
-├── Processo de perfil: Emprego
-│   └── WebView2 UserDataPath próprio
-│       └── WhatsApp Web + WA-JS + plugins + temas
+├── WebView2 UserDataPath único
+│   └── WhatsApp Web + WA-JS + plugins + temas
 │
 └── Superfícies locais frameless
     ├── themes.html
@@ -71,36 +57,19 @@ O shell local não entrega bindings Go ao documento remoto. A página do WhatsAp
 
 Veja a topologia completa em [docs/architecture.md](docs/architecture.md).
 
-### Isolamento de perfis
+### Sessão única
 
-Cada perfil possui:
-
-1. ID validado pelo host.
-2. Processo Wails filho próprio.
-3. WebViewUserDataPath exclusivo.
-4. Token IPC efêmero.
-5. Bundle de plugins e temas resolvido para aquele perfil.
-
-O estado de um plugin é resolvido assim:
-
-~~~text
-override explícito do perfil
-          ↓ se ausente
-estado global do plugin
-          ↓
-bundle injetado somente naquele processo
-~~~
-
-Um plugin globalmente habilitado entra nos perfis que herdam o estado global. Uma exceção em um perfil não altera os demais.
+O injector é construído uma vez por inicialização e aplicado à única WebView do
+WhatsApp. Plugins e temas habilitados são globais para essa sessão; nenhuma
+ação do frontend cria ou alterna outra seção de login.
 
 ### Fronteira de segurança
 
 - O URL remoto é limitado a https://web.whatsapp.com.
 - O documento remoto não recebe acesso direto a arquivos, configurações ou comandos arbitrários do Go.
 - O AppService valida a janela chamadora antes de executar operações locais.
-- O IPC de notificações valida evento, perfil, token e PID do remetente.
-- Caminhos de plugins, temas e dados de perfil são normalizados dentro dos diretórios permitidos.
-- Plugins são código confiável e podem manipular o DOM e usar WPPConnect no próprio perfil. Esta versão ainda não fornece sandbox completa para extensões.
+- Caminhos de plugins e temas são normalizados dentro dos diretórios permitidos.
+- Plugins são código confiável e podem manipular o DOM e usar WPPConnect na sessão. Esta versão ainda não fornece sandbox completa para extensões.
 
 ## Requisitos
 
@@ -112,7 +81,7 @@ O alvo principal atual é o Windows:
 - Wails 3 CLI.
 - Git.
 
-O embedding de perfis isolados depende das APIs nativas do Windows nesta versão.
+O frame frameless e a integração com a tray usam APIs nativas do Windows nesta versão.
 
 ## Desenvolvimento
 
@@ -234,6 +203,12 @@ Plugins do usuário ficam em:
 
 Revise o código de qualquer extensão antes de instalá-la.
 
+Também é possível criar um projeto inicial pela superfície **Plugins**: clique
+em **Novo template**, informe o nome e o BetterWhatsApp cria a pasta completa
+em `%AppData%\BetterWhatsApp\plugins\<id>`, com manifesto, `index.js` e
+`README.md`. O plugin entra desligado para que você possa revisar o código
+antes de ativá-lo.
+
 ## Criando temas CSS
 
 Os temas são arquivos CSS globais gerenciados pela tela Themes. O editor Monaco fornece destaque e autocomplete para CSS.
@@ -269,7 +244,6 @@ Como os seletores do WhatsApp Web podem mudar, temas baseados em classes interna
 │   └── plugins/               # Plugins distribuídos com o app
 ├── frontend/
 │   ├── src/main.ts            # Superfície principal
-│   ├── src/tabs.ts            # Shell, tabs e perfis
 │   ├── src/standalone.ts      # Themes e Plugins
 │   └── public/style.css       # Design system local
 ├── internal/
@@ -277,7 +251,7 @@ Como os seletores do WhatsApp Web podem mudar, temas baseados em classes interna
 │   ├── config/                # Configuração persistida
 │   ├── desktop/               # Wails, tray, IPC e embed Win32
 │   ├── extensions/            # Catálogo de extensões
-│   ├── injector/              # Montagem por perfil
+│   ├── injector/              # Montagem da sessão única
 │   ├── model/                 # Modelos de estado
 │   ├── plugins/               # Gerenciamento de plugins
 │   └── themes/                # Gerenciamento de temas
@@ -317,7 +291,7 @@ Contribuições são especialmente úteis em compatibilidade com novas versões 
 - [ ] Nenhum binding Go foi exposto ao documento remoto.
 - [ ] Entradas vindas do frontend continuam validadas no serviço.
 - [ ] O isolamento entre perfis foi preservado.
-- [ ] Plugins e temas continuam limitados ao perfil correto.
+- [ ] Plugins e temas continuam limitados aos diretórios e APIs permitidos.
 - [ ] Foram incluídos testes para regras novas ou casos de borda relevantes.
 - [ ] A documentação foi atualizada quando necessário.
 - [ ] Não foram incluídos tokens, cookies, sessões, builds locais ou credenciais.

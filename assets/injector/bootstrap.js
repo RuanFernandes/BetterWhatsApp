@@ -652,9 +652,9 @@
       }
 
       .bw-panel {
-        position: fixed;
+        position: absolute;
         z-index: 2147482999;
-        top: var(--bw-toolbar-height);
+        top: 0;
         right: 0;
         bottom: 0;
         width: min(438px, calc(100vw - 18px));
@@ -666,6 +666,32 @@
         pointer-events: none;
         transform: translateX(18px);
         transition: opacity 150ms ease, transform 150ms ease;
+      }
+
+      .bw-interaction-layer {
+        position: fixed;
+        z-index: 2147482998;
+        top: var(--bw-toolbar-height);
+        right: 0;
+        bottom: 0;
+        left: 0;
+        visibility: hidden;
+        opacity: 0;
+        pointer-events: none;
+        background: rgba(2, 8, 5, 0.52);
+        backdrop-filter: blur(2px);
+        transition: opacity 150ms ease, visibility 150ms ease;
+      }
+
+      .bw-interaction-layer.is-open {
+        visibility: visible;
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .bw-interaction-layer-backdrop {
+        position: absolute;
+        inset: 0;
       }
 
       .bw-panel.is-open {
@@ -697,7 +723,8 @@
       }
 
       @media (prefers-reduced-motion: reduce) {
-        .bw-panel {
+        .bw-panel,
+        .bw-interaction-layer {
           transition: none;
         }
       }
@@ -748,6 +775,16 @@
         </div>
       `;
 
+      const interactionLayer = document.createElement("div");
+      interactionLayer.id = "betterwhatsapp-interaction-layer";
+      interactionLayer.className = "bw-interaction-layer";
+      interactionLayer.setAttribute("aria-hidden", "true");
+
+      const interactionBackdrop = document.createElement("div");
+      interactionBackdrop.className = "bw-interaction-layer-backdrop";
+      interactionBackdrop.setAttribute("aria-hidden", "true");
+      interactionLayer.appendChild(interactionBackdrop);
+
       const panel = document.createElement("aside");
       panel.id = "betterwhatsapp-control-panel";
       panel.className = "bw-panel";
@@ -757,15 +794,28 @@
       mount.id = "betterwhatsapp-panel-app";
       mount.className = "bw-control-surface";
       panel.appendChild(mount);
+      interactionLayer.appendChild(panel);
 
-      document.body.append(toolbar, panel);
+      document.body.append(toolbar, interactionLayer);
+
+      const setInteractionOpen = (open) => {
+        interactionLayer.classList.toggle("is-open", open);
+        interactionLayer.setAttribute("aria-hidden", String(!open));
+      };
 
       const setPanelOpen = (open) => {
         panel.classList.toggle("is-open", open);
+        setInteractionOpen(open);
         toolbar
           .querySelector('[data-bw-action="panel"]')
           ?.setAttribute("aria-expanded", String(open));
       };
+
+      interactionLayer.addEventListener("click", (event) => {
+        if (event.target === interactionLayer || event.target === interactionBackdrop) {
+          setPanelOpen(false);
+        }
+      });
 
       const sendPanelMessage = (type, extra = {}) => {
         window.postMessage(

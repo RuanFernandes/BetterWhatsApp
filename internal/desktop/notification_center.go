@@ -3,6 +3,7 @@ package desktop
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -18,8 +19,10 @@ type NotificationCenter struct {
 	normalIcon      []byte
 	unreadIcon      []byte
 	unreadCount     int
-	unreadByProfile map[string]int
 	lastSoundAt     time.Time
+	asyncReady      atomic.Bool
+	applyPending    bool
+	pendingSnapshot *notificationSnapshot
 }
 
 type notificationSnapshot struct {
@@ -32,9 +35,8 @@ type notificationSnapshot struct {
 
 func NewNotificationCenter(normalIcon, unreadIcon []byte) *NotificationCenter {
 	return &NotificationCenter{
-		normalIcon:      append([]byte(nil), normalIcon...),
-		unreadIcon:      append([]byte(nil), unreadIcon...),
-		unreadByProfile: make(map[string]int),
+		normalIcon: append([]byte(nil), normalIcon...),
+		unreadIcon: append([]byte(nil), unreadIcon...),
 	}
 }
 
@@ -49,7 +51,18 @@ func (n *NotificationCenter) AttachTray(tray *application.SystemTray, unreadMenu
 	snapshot := n.snapshotLocked()
 	n.mu.Unlock()
 
-	n.apply(snapshot)
+	n.enqueueApply(snapshot)
+}
+
+// Start switches tray updates to the Wails main-thread queue after the native
+// application loop has started. AttachTray applies the initial state before
+// Run, so startup does not need to touch the native tray again.
+func (n *NotificationCenter) Start() {
+	if n == nil {
+		return
+	}
+
+	n.asyncReady.Store(true)
 }
 
 func (n *NotificationCenter) SetUnreadCount(count int) {
@@ -58,60 +71,15 @@ func (n *NotificationCenter) SetUnreadCount(count int) {
 	}
 
 	n.mu.Lock()
-	n.unreadByProfile = make(map[string]int)
 	n.unreadCount = normalizeUnreadCount(count)
 	snapshot := n.snapshotLocked()
 	n.mu.Unlock()
 
-	n.apply(snapshot)
+	n.enqueueApply(snapshot)
 }
 
-func (n *NotificationCenter) SetProfileUnreadCount(profileID string, count int) {
-	if n == nil || profileID == "" {
-		return
-	}
-
-	n.mu.Lock()
-	n.unreadByProfile[profileID] = normalizeUnreadCount(count)
-	total := 0
-	for _, profileCount := range n.unreadByProfile {
-		total += profileCount
-		if total >= 999999 {
-			total = 999999
-			break
-		}
-	}
-	n.unreadCount = total
-	snapshot := n.snapshotLocked()
-	n.mu.Unlock()
-
-	n.apply(snapshot)
-}
-
-func (n *NotificationCenter) ClearProfileUnreadCount(profileID string) {
-	if n == nil || profileID == "" {
-		return
-	}
-
-	n.mu.Lock()
-	delete(n.unreadByProfile, profileID)
-	total := 0
-	for _, profileCount := range n.unreadByProfile {
-		total += profileCount
-		if total >= 999999 {
-			total = 999999
-			break
-		}
-	}
-	n.unreadCount = total
-	snapshot := n.snapshotLocked()
-	n.mu.Unlock()
-
-	n.apply(snapshot)
-}
-
-func (n *NotificationCenter) HandleNewMessage(window application.Window) {
-	if n == nil || window == nil || (window.IsVisible() && !window.IsMinimised()) {
+func (n *NotificationCenter) HandleNewMessage(hidden bool) {
+	if n == nil || !hidden {
 		return
 	}
 
@@ -143,7 +111,48 @@ func (n *NotificationCenter) snapshotLocked() notificationSnapshot {
 	}
 }
 
-func (n *NotificationCenter) apply(snapshot notificationSnapshot) {
+func (n *NotificationCenter) enqueueApply(snapshot notificationSnapshot) {
+	if n == nil {
+		return
+	}
+
+	if !n.asyncReady.Load() {
+		n.applyNow(snapshot)
+		return
+	}
+
+	n.mu.Lock()
+	if n.applyPending {
+		copy := snapshot
+		n.pendingSnapshot = &copy
+		n.mu.Unlock()
+		return
+	}
+	n.applyPending = true
+	n.mu.Unlock()
+
+	application.InvokeAsync(func() {
+		n.runPendingApplies(snapshot)
+	})
+}
+
+func (n *NotificationCenter) runPendingApplies(snapshot notificationSnapshot) {
+	for {
+		n.applyNow(snapshot)
+
+		n.mu.Lock()
+		if n.pendingSnapshot == nil {
+			n.applyPending = false
+			n.mu.Unlock()
+			return
+		}
+		snapshot = *n.pendingSnapshot
+		n.pendingSnapshot = nil
+		n.mu.Unlock()
+	}
+}
+
+func (n *NotificationCenter) applyNow(snapshot notificationSnapshot) {
 	if snapshot.tray != nil {
 		if len(snapshot.icon) > 0 {
 			snapshot.tray.SetIcon(snapshot.icon)

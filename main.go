@@ -4,7 +4,6 @@ import (
 	"context"
 	"embed"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,10 +12,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"betterwhatsapp/internal/appservice"
 	"betterwhatsapp/internal/config"
@@ -28,6 +27,7 @@ import (
 	"betterwhatsapp/internal/themes"
 	"betterwhatsapp/internal/updater"
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 var appVersion = "0.1.0-dev"
@@ -48,12 +48,6 @@ var appIcon []byte
 
 //go:embed frontend/src/assets/betterwhatsapp-logo.png
 var betterWhatsAppLogo []byte
-
-//go:embed build/windows/icon.ico
-var windowsTrayIcon []byte
-
-//go:embed build/windows/icon-unread.ico
-var windowsTrayUnreadIcon []byte
 
 //go:embed assets/branding/betterwhatsapp-logo-unread.png
 var unreadTrayIcon []byte
@@ -91,6 +85,30 @@ func main() {
 	var service *appservice.Service
 	var whatsappReady atomic.Bool
 	var secondInstancePending atomic.Bool
+	var shellOpenPending atomic.Bool
+	openShellWhenReady := func() {
+		if !shellOpenPending.CompareAndSwap(false, true) {
+			return
+		}
+		go func() {
+			defer shellOpenPending.Store(false)
+			deadline := time.Now().Add(15 * time.Second)
+			for time.Now().Before(deadline) {
+				if windows != nil {
+					hwnd := windows.NativeHandle()
+					if hwnd == 0 {
+						time.Sleep(50 * time.Millisecond)
+						continue
+					}
+					if err := windows.OpenWhatsApp(); err != nil {
+						log.Printf("[BetterWhatsApp] show existing shell: %v", err)
+					}
+					return
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+		}()
+	}
 	showExistingWhatsApp := func() {
 		if !whatsappReady.Load() {
 			secondInstancePending.Store(true)
@@ -100,11 +118,8 @@ func main() {
 			log.Printf("[BetterWhatsApp] second instance requested focus before controller initialization")
 			return
 		}
-		if err := windows.OpenWhatsApp(); err != nil {
-			log.Printf("[BetterWhatsApp] focus existing instance: %v", err)
-		}
+		openShellWhenReady()
 	}
-
 	bootstrap, err := fs.ReadFile(extensionAssets, "assets/injector/bootstrap.js")
 	if err != nil {
 		log.Fatal(fmt.Errorf("read injector bootstrap: %w", err))
@@ -133,23 +148,15 @@ func main() {
 		},
 	)
 
-	if launch, ok, err := parseProfileLaunchArguments(os.Args[1:]); err != nil {
+	settings := store.Snapshot()
+	webviewDataPath, err := sessionWebviewDataPath(runtimeDirectory, settings)
+	if err != nil {
 		log.Fatal(err)
-	} else if ok {
-		if err := runProfileProcess(
-			launch,
-			store.Snapshot(),
-			runtimeDirectory,
-			builder,
-		); err != nil {
-			log.Fatal(err)
-		}
-		return
 	}
-
-	shellDataPath := filepath.Join(runtimeDirectory, "shell")
-	if err := os.MkdirAll(shellDataPath, 0o700); err != nil {
-		log.Fatal(fmt.Errorf("prepare BetterWhatsApp shell profile: %w", err))
+	if webviewDataPath != "" {
+		if err := os.MkdirAll(webviewDataPath, 0o700); err != nil {
+			log.Fatal(fmt.Errorf("prepare BetterWhatsApp WebView data: %w", err))
+		}
 	}
 
 	var notificationCenter *desktop.NotificationCenter
@@ -163,22 +170,17 @@ func main() {
 				showExistingWhatsApp()
 			},
 		},
+		OnShutdown: func() {
+			if windows != nil {
+				windows.Close()
+			}
+		},
 		Assets: application.AssetOptions{
 			Handler: application.BundledAssetFileServer(frontendAssets),
 		},
 		Windows: application.WindowsOptions{
 			DisableQuitOnLastWindowClosed: true,
-			WebviewUserDataPath:           shellDataPath,
-			WndProcInterceptor: func(hwnd uintptr, msg uint32, wParam, lParam uintptr) (uintptr, bool) {
-				if windows == nil {
-					return 0, false
-				}
-				interceptor := windows.WndProcInterceptor()
-				if interceptor == nil {
-					return 0, false
-				}
-				return interceptor(hwnd, msg, wParam, lParam)
-			},
+			WebviewUserDataPath:           webviewDataPath,
 		},
 		Linux: application.LinuxOptions{
 			DisableQuitOnLastWindowClosed: true,
@@ -188,19 +190,25 @@ func main() {
 				if windows == nil {
 					return errors.New("WhatsApp window controller is not initialized")
 				}
-				return windows.CreateWhatsAppWindow(store.Snapshot())
+				return windows.ReloadWhatsApp()
 			}, func(surface string) error {
 				if windows == nil {
 					return errors.New("WhatsApp window controller is not initialized")
 				}
 				return windows.OpenSurface(surface)
+			}, func(command string) error {
+				if windows == nil {
+					return errors.New("WhatsApp window controller is not initialized")
+				}
+				return windows.HandleWindowCommand(command)
 			}, func(count int) {
 				if notificationCenter != nil {
 					notificationCenter.SetUnreadCount(count)
 				}
-			}, func(notificationWindow application.Window) {
+			}, func() {
 				if notificationCenter != nil {
-					notificationCenter.HandleNewMessage(notificationWindow)
+					hidden := windows == nil || windows.WhatsAppNeedsNotification()
+					notificationCenter.HandleNewMessage(hidden)
 				}
 			})
 		},
@@ -210,7 +218,6 @@ func main() {
 	})
 
 	windows = desktop.NewController(wailsApp, builder.Build)
-	windows.SetRuntimeDirectory(runtimeDirectory)
 	service = appservice.NewWithReloadAndOperations(
 		store,
 		pluginManager,
@@ -220,7 +227,7 @@ func main() {
 			if windows == nil {
 				return errors.New("WhatsApp window controller is not initialized")
 			}
-			return windows.RestartProfiles(store.Snapshot())
+			return windows.ReloadWhatsApp()
 		},
 		windows,
 		windows.OpenSurface,
@@ -228,13 +235,19 @@ func main() {
 	)
 	wailsApp.RegisterService(application.NewService(service))
 
-	if err := windows.CreateShellWindow(store.Snapshot()); err != nil {
+	if err := windows.CreateWhatsAppWindow(settings); err != nil {
 		log.Fatal(err)
 	}
 	whatsappReady.Store(true)
-	if secondInstancePending.Swap(false) {
-		showExistingWhatsApp()
-	}
+	wailsApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		// Wails creates pending windows asynchronously. Showing the native
+		// container here is safe because OpenWhatsApp uses only Win32 calls;
+		// it does not enter the WebView2 dispatcher while startup is settling.
+		openShellWhenReady()
+		if secondInstancePending.Swap(false) {
+			openShellWhenReady()
+		}
+	})
 
 	tray := wailsApp.SystemTray.New()
 
@@ -252,157 +265,55 @@ func main() {
 		windows.Quit()
 	})
 	tray.SetMenu(trayMenu)
+	// Set the normal icon before Run so the deferred Wails tray has a valid
+	// image on its first native initialization. Show it again after the
+	// platform loop starts in case Windows restored it as hidden.
+	tray.SetIcon(trayIcon(false))
+	tray.SetTooltip("BetterWhatsApp — Nenhuma mensagem não lida")
 	notificationCenter = desktop.NewNotificationCenter(trayIcon(false), trayIcon(true))
 	notificationCenter.AttachTray(tray, unreadMenuItem)
-	windows.SetProfileRemovedHandler(notificationCenter.ClearProfileUnreadCount)
-	windows.SetProfileEventHandler(func(event desktop.ProfileEvent) {
-		switch event.Type {
-		case "unread":
-			notificationCenter.SetProfileUnreadCount(event.ProfileID, event.Count)
-		case "new-message":
-			notificationCenter.HandleNewMessage(windows.Window())
-		}
-	})
 	tray.OnClick(func() {
 		if err := windows.ToggleWhatsApp(); err != nil {
 			log.Printf("[BetterWhatsApp] tray toggle: %v", err)
 		}
 	})
-	if err := windows.StartProfiles(store.Snapshot()); err != nil {
-		log.Printf("[BetterWhatsApp] profile startup: %v", err)
-	}
+	wailsApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		tray.Show()
+		notificationCenter.Start()
+	})
 
 	if err := wailsApp.Run(); err != nil {
 		log.Fatal(err)
 	}
 }
 
-type profileLaunchArguments struct {
-	ProfileID    string
-	ParentHandle uintptr
-	IPCToken     string
-}
-
-func parseProfileLaunchArguments(args []string) (profileLaunchArguments, bool, error) {
-	if len(args) == 0 {
-		return profileLaunchArguments{}, false, nil
-	}
-	if len(args) != 6 || args[0] != "--profile-window" || args[2] != "--parent-hwnd" || args[4] != "--ipc-token" {
-		return profileLaunchArguments{}, false, fmt.Errorf("invalid profile process arguments")
-	}
-	if args[1] == "" || args[5] == "" {
-		return profileLaunchArguments{}, false, errors.New("profile process identity is incomplete")
-	}
-	parentHandle, err := strconv.ParseUint(args[3], 10, 64)
-	if err != nil || parentHandle == 0 {
-		return profileLaunchArguments{}, false, errors.New("profile process parent handle is invalid")
-	}
-	if len(args[5]) != 48 {
-		return profileLaunchArguments{}, false, errors.New("profile process IPC token is invalid")
-	}
-	if _, err := hex.DecodeString(args[5]); err != nil {
-		return profileLaunchArguments{}, false, errors.New("profile process IPC token is invalid")
-	}
-	return profileLaunchArguments{
-		ProfileID:    args[1],
-		ParentHandle: uintptr(parentHandle),
-		IPCToken:     args[5],
-	}, true, nil
-}
-
-func runProfileProcess(
-	launch profileLaunchArguments,
-	settings model.Settings,
-	runtimeDirectory string,
-	builder *injector.Builder,
-) error {
-	profile, ok := settings.Profiles[launch.ProfileID]
+func sessionWebviewDataPath(runtimeDirectory string, settings model.Settings) (string, error) {
+	profile, ok := settings.Profiles[settings.ActiveProfileID]
 	if !ok {
-		return fmt.Errorf("profile %q is not configured", launch.ProfileID)
-	}
-	userDataPath, err := profileWebviewDataPath(runtimeDirectory, profile)
-	if err != nil {
-		return err
-	}
-	if userDataPath != "" {
-		if err := os.MkdirAll(userDataPath, 0o700); err != nil {
-			return fmt.Errorf("prepare profile %q WebView data: %w", profile.ID, err)
+		for _, id := range settings.ProfileOrder {
+			if candidate, exists := settings.Profiles[id]; exists {
+				profile = candidate
+				ok = true
+				break
+			}
 		}
 	}
-
-	var profileController *desktop.Controller
-	sendEvent := func(event desktop.ProfileEvent) {
-		event.ProfileID = launch.ProfileID
-		event.Token = launch.IPCToken
-		senderHandle := uintptr(0)
-		if profileController != nil {
-			senderHandle = profileController.NativeHandle()
-		}
-		if err := desktop.SendProfileEvent(launch.ParentHandle, senderHandle, event); err != nil {
-			log.Printf("[BetterWhatsApp] profile %q IPC event failed: %v", launch.ProfileID, err)
-		}
-	}
-	profileApp := application.New(application.Options{
-		Name:        "BetterWhatsApp",
-		Description: "BetterWhatsApp isolated WhatsApp profile",
-		Icon:        appIcon,
-		Assets: application.AssetOptions{
-			Handler: application.BundledAssetFileServer(frontendAssets),
-		},
-		Windows: application.WindowsOptions{
-			DisableQuitOnLastWindowClosed: true,
-			WebviewUserDataPath:           userDataPath,
-		},
-		Linux: application.LinuxOptions{
-			DisableQuitOnLastWindowClosed: true,
-		},
-		RawMessageHandler: func(window application.Window, message string, originInfo *application.OriginInfo) {
-			handleRawMessage(
-				nil,
-				window,
-				message,
-				originInfo,
-				nil,
-				nil,
-				func(count int) {
-					sendEvent(desktop.ProfileEvent{Type: "unread", Count: count})
-				},
-				func(application.Window) {
-					sendEvent(desktop.ProfileEvent{Type: "new-message"})
-				},
-			)
-		},
-		ErrorHandler: func(err error) {
-			log.Printf("[BetterWhatsApp] profile %q: %v", launch.ProfileID, err)
-		},
-	})
-	profileController = desktop.NewController(profileApp, func(current model.Settings) (string, error) {
-		return builder.BuildForProfile(current, launch.ProfileID)
-	})
-	if err := profileController.CreateProfileWindow(settings); err != nil {
-		return err
-	}
-	if err := profileApp.Run(); err != nil {
-		return fmt.Errorf("run profile %q: %w", launch.ProfileID, err)
-	}
-	return nil
-}
-
-func profileWebviewDataPath(runtimeDirectory string, profile model.Profile) (string, error) {
-	if profile.LegacyWebviewData {
+	if !ok || profile.LegacyWebviewData {
+		// Empty means Wails' historical default %APPDATA%\\betterwhatsapp.exe,
+		// which is where the original single-session build stored the login.
 		return "", nil
 	}
 	base, err := filepath.Abs(filepath.Join(runtimeDirectory, "profiles"))
 	if err != nil {
-		return "", fmt.Errorf("resolve profile data directory: %w", err)
+		return "", fmt.Errorf("resolve WebView data directory: %w", err)
 	}
 	target, err := filepath.Abs(filepath.Join(base, profile.ID))
 	if err != nil {
-		return "", fmt.Errorf("resolve profile %q data directory: %w", profile.ID, err)
+		return "", fmt.Errorf("resolve session data directory: %w", err)
 	}
 	relative, err := filepath.Rel(base, target)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("profile %q data path escapes the profile directory", profile.ID)
+		return "", fmt.Errorf("session data path escapes the BetterWhatsApp directory")
 	}
 	return target, nil
 }
@@ -496,15 +407,13 @@ func buildControlState(
 		return model.AppState{}, fmt.Errorf("list themes for control surface: %w", err)
 	}
 	return model.AppState{
-		AppVersion:      appVersion,
-		Injector:        settings.Injector,
-		Plugins:         pluginsList,
-		Themes:          themesList,
-		ActiveThemeID:   settings.ActiveThemeID,
-		WhatsAppURL:     settings.WhatsAppURL,
-		RemoteOrigin:    desktop.RemoteOrigin(),
-		Profiles:        config.ProfileInfos(settings),
-		ActiveProfileID: settings.ActiveProfileID,
+		AppVersion:    appVersion,
+		Injector:      settings.Injector,
+		Plugins:       pluginsList,
+		Themes:        themesList,
+		ActiveThemeID: settings.ActiveThemeID,
+		WhatsAppURL:   settings.WhatsAppURL,
+		RemoteOrigin:  desktop.RemoteOrigin(),
 	}, nil
 }
 
@@ -515,8 +424,9 @@ func handleRawMessage(
 	originInfo *application.OriginInfo,
 	reload func() error,
 	openSurface func(string) error,
+	windowCommand func(string) error,
 	setUnreadCount func(int),
-	handleNewMessage func(application.Window),
+	handleNewMessage func(),
 ) {
 	if window == nil ||
 		window.Name() != "whatsapp" ||
@@ -532,7 +442,7 @@ func handleRawMessage(
 			setUnreadCount(count)
 		}
 		if message == "betterwhatsapp:notifications:new-message" && handleNewMessage != nil {
-			handleNewMessage(window)
+			handleNewMessage()
 		}
 		return
 	}
@@ -550,20 +460,38 @@ func handleRawMessage(
 	}
 	if message == "betterwhatsapp:notifications:new-message" {
 		if handleNewMessage != nil {
-			handleNewMessage(window)
+			handleNewMessage()
 		}
 		return
 	}
 
 	switch message {
 	case "betterwhatsapp:window:hide":
-		window.Hide()
+		if windowCommand != nil {
+			if err := windowCommand("hide"); err != nil {
+				log.Printf("[BetterWhatsApp] hide window failed: %v", err)
+			}
+		} else {
+			window.Hide()
+		}
 		return
 	case "betterwhatsapp:window:maximise":
-		window.ToggleMaximise()
+		if windowCommand != nil {
+			if err := windowCommand("maximise"); err != nil {
+				log.Printf("[BetterWhatsApp] maximise window failed: %v", err)
+			}
+		} else {
+			window.ToggleMaximise()
+		}
 		return
 	case "betterwhatsapp:window:close":
-		window.Close()
+		if windowCommand != nil {
+			if err := windowCommand("close"); err != nil {
+				log.Printf("[BetterWhatsApp] close window failed: %v", err)
+			}
+		} else {
+			window.Hide()
+		}
 		return
 	case "betterwhatsapp:window:reload":
 		if reload == nil {
@@ -772,16 +700,11 @@ func decodeUnreadCountMessage(message string) (int, bool) {
 }
 
 func trayIcon(hasUnread bool) []byte {
-	if runtime.GOOS == "windows" {
-		if hasUnread && len(windowsTrayUnreadIcon) > 0 {
-			return windowsTrayUnreadIcon
-		}
-		if len(windowsTrayIcon) > 0 {
-			return windowsTrayIcon
-		}
-	}
 	if hasUnread && len(unreadTrayIcon) > 0 {
 		return unreadTrayIcon
+	}
+	if len(betterWhatsAppLogo) > 0 {
+		return betterWhatsAppLogo
 	}
 	return appIcon
 }

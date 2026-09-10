@@ -9,8 +9,6 @@ export interface AppState {
     "activeThemeId": string;
     "whatsappUrl": string;
     "remoteOrigin": string;
-    "profiles": ProfileInfo[] | null;
-    "activeProfileId": string;
 }
 
 export interface InjectorSettings {
@@ -25,14 +23,7 @@ export interface PluginInfo {
     "author": string;
     "enabled": boolean;
     "globalEnabled": boolean;
-    "profileOverride"?: boolean | null;
     "entry": string;
-}
-
-export interface ProfileInfo {
-    "id": string;
-    "name": string;
-    "accent": string;
 }
 
 export interface ThemeInfo {

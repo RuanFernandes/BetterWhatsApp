@@ -13,20 +13,12 @@ export function CheckForUpdate(): $CancellablePromise<model$0.UpdateInfo> {
     return $Call.ByID(748020245);
 }
 
-export function ClearPluginOverride(profileID: string, id: string): $CancellablePromise<void> {
-    return $Call.ByID(2557691403, profileID, id);
-}
-
-export function CreateProfile(name: string): $CancellablePromise<model$0.ProfileInfo> {
-    return $Call.ByID(1344118072, name);
+export function CreatePluginTemplate(name: string): $CancellablePromise<string> {
+    return $Call.ByID(1592213862, name);
 }
 
 export function CreateTheme(name: string, source: string): $CancellablePromise<string> {
     return $Call.ByID(972062824, name, source);
-}
-
-export function DeleteProfile(profileID: string): $CancellablePromise<void> {
-    return $Call.ByID(1318288425, profileID);
 }
 
 export function DeleteTheme(id: string): $CancellablePromise<void> {
@@ -35,10 +27,6 @@ export function DeleteTheme(id: string): $CancellablePromise<void> {
 
 export function DownloadUpdate(): $CancellablePromise<model$0.UpdateInfo> {
     return $Call.ByID(510197770);
-}
-
-export function GetProfileState(profileID: string): $CancellablePromise<model$0.AppState> {
-    return $Call.ByID(4089782047, profileID);
 }
 
 export function GetState(): $CancellablePromise<model$0.AppState> {
@@ -65,16 +53,8 @@ export function ReloadWhatsApp(): $CancellablePromise<void> {
     return $Call.ByID(3302043732);
 }
 
-export function RenameProfile(profileID: string, name: string): $CancellablePromise<void> {
-    return $Call.ByID(1103128350, profileID, name);
-}
-
 export function RequestClose(): $CancellablePromise<void> {
     return $Call.ByID(3093136164);
-}
-
-export function SelectProfile(profileID: string): $CancellablePromise<void> {
-    return $Call.ByID(1667403392, profileID);
 }
 
 export function SetInjectorEnabled(enabled: boolean): $CancellablePromise<void> {
@@ -83,10 +63,6 @@ export function SetInjectorEnabled(enabled: boolean): $CancellablePromise<void> 
 
 export function SetPluginEnabled(id: string, enabled: boolean): $CancellablePromise<void> {
     return $Call.ByID(268033335, id, enabled);
-}
-
-export function SetPluginEnabledForProfile(profileID: string, id: string, enabled: boolean): $CancellablePromise<void> {
-    return $Call.ByID(3346133471, profileID, id, enabled);
 }
 
 export function SetThemeEnabled(id: string, enabled: boolean): $CancellablePromise<void> {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"betterwhatsapp/internal/extensions"
 	"betterwhatsapp/internal/model"
@@ -19,27 +20,151 @@ func NewManager(catalog *extensions.Catalog) *Manager {
 	return &Manager{catalog: catalog}
 }
 
-func (m *Manager) List(settings model.Settings) ([]model.PluginInfo, error) {
-	return m.ListForProfile(settings, settings.ActiveProfileID)
+const pluginTemplateSource = `(() => {
+  "use strict";
+
+  BetterWhatsApp.registerPlugin("__PLUGIN_ID__", ({ WPP, addStyle, observe, log }) => {
+    addStyle("__PLUGIN_ID__-style", [
+      "[data-better-whatsapp='__PLUGIN_ID__'] {",
+      "  color: var(--bw-accent, #50e58b);",
+      "  font-weight: 700;",
+      "}",
+    ].join("\n"));
+
+    observe("[contenteditable='true']", (composer) => {
+      if (composer.parentElement?.querySelector("[data-better-whatsapp='__PLUGIN_ID__']")) {
+        return;
+      }
+
+      const marker = document.createElement("span");
+      marker.dataset.betterWhatsapp = "__PLUGIN_ID__";
+      marker.textContent = "Plugin ativo";
+      marker.title = "Remova este bloco quando não precisar do exemplo";
+      composer.parentElement?.append(marker);
+    });
+
+    log("__PLUGIN_ID__ carregado", { WPP });
+  });
+})();
+`
+
+// CreateTemplate creates a disabled, editable user plugin without replacing an
+// existing bundled plugin or a previous user project.
+func (m *Manager) CreateTemplate(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("plugin name is required")
+	}
+	if len([]rune(name)) > 80 {
+		return "", errors.New("plugin name is too long")
+	}
+
+	manifests, err := m.catalog.Load()
+	if err != nil {
+		return "", err
+	}
+	usedIDs := make(map[string]struct{}, len(manifests))
+	for _, manifest := range manifests {
+		usedIDs[manifest.ID] = struct{}{}
+	}
+
+	baseID := pluginTemplateID(name)
+	manifest := extensions.Manifest{
+		Name:        name,
+		Version:     "0.1.0",
+		Description: "Plugin local criado pelo template do BetterWhatsApp.",
+		Entry:       "index.js",
+	}
+	sourceFor := func(id string) []byte {
+		return []byte(strings.ReplaceAll(pluginTemplateSource, "__PLUGIN_ID__", id))
+	}
+
+	for suffix := 1; suffix <= 100; suffix++ {
+		id := baseID
+		if suffix > 1 {
+			id = fmt.Sprintf("%s-%d", baseID, suffix)
+		}
+		if _, exists := usedIDs[id]; exists {
+			continue
+		}
+
+		manifest.ID = id
+		if err := m.catalog.CreateUser(manifest, sourceFor(id)); err != nil {
+			if strings.Contains(err.Error(), "already exists") {
+				continue
+			}
+			return "", fmt.Errorf("create plugin template: %w", err)
+		}
+
+		projectPath, err := m.catalog.UserPath(id)
+		if err != nil {
+			return "", err
+		}
+		if err := ensureProjectReadme(projectPath, manifest); err != nil {
+			return "", err
+		}
+		return projectPath, nil
+	}
+
+	return "", errors.New("could not allocate a unique plugin id")
 }
 
-func (m *Manager) ListForProfile(settings model.Settings, profileID string) ([]model.PluginInfo, error) {
+func pluginTemplateID(name string) string {
+	var builder strings.Builder
+	lastDash := false
+	for _, char := range strings.ToLower(name) {
+		char = foldPluginRune(char)
+		switch {
+		case char >= 'a' && char <= 'z' || char >= '0' && char <= '9':
+			builder.WriteRune(char)
+			lastDash = false
+		case builder.Len() > 0 && !lastDash:
+			builder.WriteByte('-')
+			lastDash = true
+		}
+	}
+
+	id := strings.Trim(builder.String(), "-")
+	if id == "" {
+		id = "meu-plugin"
+	}
+	if len(id) > 55 {
+		id = strings.TrimRight(id[:55], "-")
+	}
+	return id
+}
+
+func foldPluginRune(char rune) rune {
+	switch char {
+	case 'á', 'à', 'â', 'ã', 'ä':
+		return 'a'
+	case 'ç':
+		return 'c'
+	case 'é', 'è', 'ê', 'ë':
+		return 'e'
+	case 'í', 'ì', 'î', 'ï':
+		return 'i'
+	case 'ñ':
+		return 'n'
+	case 'ó', 'ò', 'ô', 'õ', 'ö':
+		return 'o'
+	case 'ú', 'ù', 'û', 'ü':
+		return 'u'
+	case 'ý', 'ÿ':
+		return 'y'
+	}
+	return char
+}
+
+func (m *Manager) List(settings model.Settings) ([]model.PluginInfo, error) {
 	manifests, err := m.catalog.Load()
 	if err != nil {
 		return nil, err
 	}
-	profile, hasProfile := settings.Profiles[profileID]
 	result := make([]model.PluginInfo, 0, len(manifests))
 	for _, manifest := range manifests {
 		globalState := settings.Plugins[manifest.ID]
-		var override *bool
-		if hasProfile {
-			if value, ok := profile.PluginOverrides[manifest.ID]; ok {
-				valueCopy := value
-				override = &valueCopy
-			}
-		}
-		result = append(result, extensions.ToPluginInfoForProfile(manifest, globalState, override))
+		result = append(result, extensions.ToPluginInfo(manifest, globalState))
 	}
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].Name < result[j].Name
@@ -48,23 +173,13 @@ func (m *Manager) ListForProfile(settings model.Settings, profileID string) ([]m
 }
 
 func (m *Manager) Enabled(settings model.Settings) ([]string, error) {
-	return m.EnabledForProfile(settings, settings.ActiveProfileID)
-}
-
-func (m *Manager) EnabledForProfile(settings model.Settings, profileID string) ([]string, error) {
 	manifests, err := m.catalog.Load()
 	if err != nil {
 		return nil, err
 	}
-	profile, hasProfile := settings.Profiles[profileID]
 	enabled := make([]string, 0, len(manifests))
 	for _, manifest := range manifests {
 		isEnabled := settings.Plugins[manifest.ID].Enabled
-		if hasProfile {
-			if override, ok := profile.PluginOverrides[manifest.ID]; ok {
-				isEnabled = override
-			}
-		}
 		if !isEnabled {
 			continue
 		}
@@ -86,21 +201,6 @@ func (m *Manager) EnsureDefaults(settings *model.Settings) error {
 		if _, ok := settings.Plugins[manifest.ID]; !ok {
 			settings.Plugins[manifest.ID] = model.PluginState{Enabled: false}
 		}
-	}
-	installed := make(map[string]struct{}, len(manifests))
-	for _, manifest := range manifests {
-		installed[manifest.ID] = struct{}{}
-	}
-	for id, profile := range settings.Profiles {
-		if profile.PluginOverrides == nil {
-			profile.PluginOverrides = map[string]bool{}
-		}
-		for pluginID := range profile.PluginOverrides {
-			if _, ok := installed[pluginID]; !ok {
-				delete(profile.PluginOverrides, pluginID)
-			}
-		}
-		settings.Profiles[id] = profile
 	}
 	return nil
 }

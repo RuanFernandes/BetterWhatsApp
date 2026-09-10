@@ -498,24 +498,15 @@ func limitSize(data []byte) ([]byte, error) {
 }
 
 func ToPluginInfo(manifest Manifest, state model.PluginState) model.PluginInfo {
-	return ToPluginInfoForProfile(manifest, state, nil)
-}
-
-func ToPluginInfoForProfile(manifest Manifest, state model.PluginState, override *bool) model.PluginInfo {
-	enabled := state.Enabled
-	if override != nil {
-		enabled = *override
-	}
 	return model.PluginInfo{
-		ID:              manifest.ID,
-		Name:            manifest.Name,
-		Version:         manifest.Version,
-		Description:     manifest.Description,
-		Author:          manifest.Author,
-		Enabled:         enabled,
-		GlobalEnabled:   state.Enabled,
-		ProfileOverride: override,
-		Entry:           manifest.Entry,
+		ID:            manifest.ID,
+		Name:          manifest.Name,
+		Version:       manifest.Version,
+		Description:   manifest.Description,
+		Author:        manifest.Author,
+		Enabled:       state.Enabled,
+		GlobalEnabled: state.Enabled,
+		Entry:         manifest.Entry,
 	}
 }
 

@@ -14,7 +14,6 @@ export default defineConfig({
     rolldownOptions: {
       input: {
         main: resolve(process.cwd(), "index.html"),
-        tabs: resolve(process.cwd(), "tabs.html"),
         themes: resolve(process.cwd(), "themes.html"),
         plugins: resolve(process.cwd(), "plugins.html"),
       },

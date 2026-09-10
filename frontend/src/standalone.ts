@@ -299,7 +299,6 @@ let currentState: AppState | null = null;
 let busy = false;
 let editor: monaco.editor.IStandaloneCodeEditor | null = null;
 let editingThemeID: string | null = null;
-let selectedPluginProfileID: string | null = null;
 
 function query<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -583,18 +582,6 @@ function shellMarkup(kind: SurfaceKind) {
                 <span>plugins ativos</span>
               </div>
             </div>
-            <section class="plugin-profile-scope" aria-labelledby="plugin-profile-scope-title">
-              <div>
-                <span class="surface-kicker">PROFILE SCOPE</span>
-                <strong id="plugin-profile-scope-title">Configuração desta seção</strong>
-                <p>O override vale somente para o processo e o login selecionados.</p>
-              </div>
-              <label class="plugin-profile-select">
-                <span>Perfil alvo</span>
-                <select id="plugin-profile-scope" aria-label="Perfil alvo dos plugins"></select>
-              </label>
-              <span class="plugin-profile-lock"><span>●</span> sessão isolada</span>
-            </section>
             <div class="plugin-workspace-grid">
               <section class="surface-panel">
                 <div class="surface-section-heading">
@@ -602,7 +589,10 @@ function shellMarkup(kind: SurfaceKind) {
                     <span class="surface-kicker">INSTALLED</span>
                     <h2>Catálogo local</h2>
                   </div>
-                  <span class="surface-file-path">plugins/</span>
+                  <div class="surface-section-heading-actions">
+                    <span class="surface-file-path">plugins/ local</span>
+                    <button class="surface-button surface-button-accent surface-button-small" id="plugin-new" type="button">Novo template</button>
+                  </div>
                 </div>
                 <div class="plugin-card-list" id="plugin-catalog-list"></div>
               </section>
@@ -660,6 +650,26 @@ function shellMarkup(kind: SurfaceKind) {
         </div>
       </header>
       ${body}
+      ${kind === "plugins" ? `
+        <div class="surface-plugin-dialog-backdrop" id="plugin-template-dialog" role="dialog" aria-modal="true" aria-labelledby="plugin-template-dialog-title" hidden>
+          <form class="surface-plugin-dialog" id="plugin-template-form">
+            <div class="surface-plugin-dialog-heading">
+              <span class="surface-kicker">NEW LOCAL PROJECT</span>
+              <h2 id="plugin-template-dialog-title">Criar template de plugin</h2>
+              <p>Um projeto editável será criado em <code>%AppData%/BetterWhatsApp/plugins</code>. Ele começa desligado e não substitui nenhum plugin existente.</p>
+            </div>
+            <label class="surface-plugin-field">
+              <span>Nome do plugin</span>
+              <input id="plugin-template-name" name="name" type="text" maxlength="80" placeholder="Ex.: Ferramentas da equipe" autocomplete="off" required />
+            </label>
+            <p class="surface-plugin-dialog-hint">O ID da pasta é derivado automaticamente do nome e recebe um sufixo se já existir.</p>
+            <div class="surface-plugin-dialog-actions">
+              <button class="surface-button surface-button-quiet" id="plugin-template-cancel" type="button">Cancelar</button>
+              <button class="surface-button surface-button-accent" type="submit">Criar projeto</button>
+            </div>
+          </form>
+        </div>
+      ` : ""}
       <footer class="surface-footer">
         <div class="surface-footer-status" aria-live="polite">
           <span class="surface-status-dot"></span>
@@ -715,15 +725,10 @@ function createToggle(checked: boolean, label: string, onChange: (value: boolean
 }
 
 async function refreshState() {
-  if (surface === "plugins" && selectedPluginProfileID) {
-    currentState = await Service.GetProfileState(selectedPluginProfileID);
-  } else {
-    currentState = await Service.GetState();
-  }
+  currentState = await Service.GetState();
   if (surface === "themes") {
     renderThemes(currentState.themes ?? []);
   } else {
-    renderPluginProfileScope(currentState);
     renderPlugins(currentState.plugins ?? []);
   }
 }
@@ -946,24 +951,6 @@ const pluginApiExample = [
   "});",
 ].join("\n");
 
-function renderPluginProfileScope(state: AppState) {
-  const select = query<HTMLSelectElement>("#plugin-profile-scope");
-  const profiles = state.profiles ?? [];
-  const activeID = selectedPluginProfileID ?? state.activeProfileId ?? profiles[0]?.id ?? "";
-  select.replaceChildren();
-  profiles.forEach((profile) => {
-    const option = document.createElement("option");
-    option.value = profile.id;
-    option.textContent = profile.name + " · isolated";
-    select.append(option);
-  });
-  select.disabled = profiles.length === 0;
-  if (profiles.some((profile) => profile.id === activeID)) {
-    select.value = activeID;
-    selectedPluginProfileID = activeID;
-  }
-}
-
 function renderPlugins(plugins: PluginInfo[]) {
   const list = query<HTMLDivElement>("#plugin-list");
   const catalog = query<HTMLDivElement>("#plugin-catalog-list");
@@ -974,10 +961,15 @@ function renderPlugins(plugins: PluginInfo[]) {
   query<HTMLElement>("#plugin-active-count").textContent = String(enabledCount);
 
   if (plugins.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "surface-empty";
-    empty.textContent = "Nenhum plugin no catálogo local.";
-    list.append(empty);
+    const sidebarEmpty = document.createElement("div");
+    sidebarEmpty.className = "surface-empty";
+    sidebarEmpty.textContent = "Nenhum plugin no catálogo local.";
+    list.append(sidebarEmpty);
+
+    const catalogEmpty = document.createElement("div");
+    catalogEmpty.className = "surface-empty";
+    catalogEmpty.textContent = "Nenhum plugin criado ainda. Use Novo template para começar.";
+    catalog.append(catalogEmpty);
     return;
   }
 
@@ -986,7 +978,9 @@ function renderPlugins(plugins: PluginInfo[]) {
     nav.className = "plugin-nav-row";
     const navDot = document.createElement("span");
     navDot.className = "plugin-nav-dot";
-    navDot.dataset.enabled = String(plugin.enabled);
+    if (plugin.enabled) {
+      navDot.classList.add("is-enabled");
+    }
     const navName = document.createElement("span");
     navName.textContent = plugin.name;
     nav.append(navDot, navName);
@@ -1000,6 +994,7 @@ function renderPlugins(plugins: PluginInfo[]) {
     icon.className = "plugin-card-icon";
     icon.textContent = "✦";
     const copy = document.createElement("div");
+    copy.className = "plugin-card-copy";
     const name = document.createElement("h3");
     name.textContent = plugin.name;
     const description = document.createElement("p");
@@ -1011,51 +1006,12 @@ function renderPlugins(plugins: PluginInfo[]) {
 
     const controls = document.createElement("div");
     controls.className = "plugin-card-controls";
-    const scopeID = currentState?.activeProfileId ?? selectedPluginProfileID ?? "";
-    const profile = currentState?.profiles?.find((candidate) => candidate.id === scopeID);
     const globalToggle = createToggle(plugin.globalEnabled, "Alterar padrão global de " + plugin.name, (enabled) => {
       void performAction(
         enabled ? "Ativando globalmente " + plugin.name + "…" : "Desativando globalmente " + plugin.name + "…",
         () => Service.SetPluginEnabled(plugin.id, enabled),
       );
     });
-    const override = document.createElement("label");
-    override.className = "plugin-override-control";
-    const overrideCaption = document.createElement("span");
-    overrideCaption.textContent = profile ? "Nesta seção" : "Perfil";
-    const overrideSelect = document.createElement("select");
-    overrideSelect.setAttribute("aria-label", "Ativação de " + plugin.name + " nesta seção");
-    const inherit = document.createElement("option");
-    inherit.value = "inherit";
-    inherit.textContent = "Herdar global";
-    const forceOn = document.createElement("option");
-    forceOn.value = "enabled";
-    forceOn.textContent = "Forçar ligado";
-    const forceOff = document.createElement("option");
-    forceOff.value = "disabled";
-    forceOff.textContent = "Forçar desligado";
-    overrideSelect.append(inherit, forceOn, forceOff);
-    overrideSelect.value = plugin.profileOverride === undefined
-      ? "inherit"
-      : plugin.profileOverride
-        ? "enabled"
-        : "disabled";
-    overrideSelect.addEventListener("change", () => {
-      if (!scopeID) {
-        return;
-      }
-      void performAction("Atualizando o escopo de " + plugin.name + "…", () => {
-        if (overrideSelect.value === "inherit") {
-          return Service.ClearPluginOverride(scopeID, plugin.id);
-        }
-        return Service.SetPluginEnabledForProfile(
-          scopeID,
-          plugin.id,
-          overrideSelect.value === "enabled",
-        );
-      });
-    });
-    override.append(overrideCaption, overrideSelect);
     const open = document.createElement("button");
     open.type = "button";
     open.className = "surface-button surface-button-accent";
@@ -1078,7 +1034,7 @@ function renderPlugins(plugins: PluginInfo[]) {
         setBusy(false);
       }
     });
-    controls.append(globalToggle, override, open);
+    controls.append(globalToggle, open);
     card.append(identity, controls);
     catalog.append(card);
   });
@@ -1110,19 +1066,78 @@ function bindThemeActions() {
 
 function bindPluginActions() {
   query<HTMLElement>("#api-example").textContent = pluginApiExample;
-  query<HTMLSelectElement>("#plugin-profile-scope").addEventListener("change", () => {
-    selectedPluginProfileID = query<HTMLSelectElement>("#plugin-profile-scope").value || null;
-    setStatus("Lendo configuração do perfil…");
-    void refreshState()
-      .then(() => setStatus("Escopo de perfil carregado", "success"))
-      .catch(showError);
-  });
+  bindPluginTemplateDialog();
   query<HTMLButtonElement>("#copy-api").addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(pluginApiExample);
       setStatus("Exemplo copiado", "success");
     } catch {
       setStatus("Não foi possível copiar o exemplo", "error");
+    }
+  });
+}
+
+function closePluginTemplateDialog() {
+  query<HTMLDivElement>("#plugin-template-dialog").hidden = true;
+}
+
+function openPluginTemplateDialog() {
+  if (busy) {
+    return;
+  }
+  clearError();
+  const backdrop = query<HTMLDivElement>("#plugin-template-dialog");
+  const input = query<HTMLInputElement>("#plugin-template-name");
+  backdrop.hidden = false;
+  input.value = "";
+  input.focus();
+}
+
+async function createPluginTemplate(name: string) {
+  if (busy || !name) {
+    return;
+  }
+  setBusy(true);
+  clearError();
+  setStatus("Criando projeto de plugin…");
+  try {
+    const projectPath = await Service.CreatePluginTemplate(name);
+    await refreshState();
+    query<HTMLElement>("#project-status").textContent = "Template criado no catálogo local";
+    query<HTMLElement>("#project-path").textContent = projectPath;
+    closePluginTemplateDialog();
+    setStatus("Template pronto para editar", "success");
+  } catch (error) {
+    showError(error);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function bindPluginTemplateDialog() {
+  const backdrop = query<HTMLDivElement>("#plugin-template-dialog");
+  const form = query<HTMLFormElement>("#plugin-template-form");
+  const input = query<HTMLInputElement>("#plugin-template-name");
+
+  query<HTMLButtonElement>("#plugin-new").addEventListener("click", openPluginTemplateDialog);
+  query<HTMLButtonElement>("#plugin-template-cancel").addEventListener("click", closePluginTemplateDialog);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = input.value.trim();
+    if (!name) {
+      input.focus();
+      return;
+    }
+    void createPluginTemplate(name);
+  });
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) {
+      closePluginTemplateDialog();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !backdrop.hidden) {
+      closePluginTemplateDialog();
     }
   });
 }

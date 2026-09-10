@@ -5,7 +5,6 @@ export type {
     AppState,
     InjectorSettings,
     PluginInfo,
-    ProfileInfo,
     ThemeInfo,
     UpdateInfo
 } from "./models.js";

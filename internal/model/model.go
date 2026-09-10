@@ -47,15 +47,14 @@ type ProfileInfo struct {
 }
 
 type PluginInfo struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Version         string `json:"version"`
-	Description     string `json:"description"`
-	Author          string `json:"author"`
-	Enabled         bool   `json:"enabled"`
-	GlobalEnabled   bool   `json:"globalEnabled"`
-	ProfileOverride *bool  `json:"profileOverride,omitempty"`
-	Entry           string `json:"entry"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Version       string `json:"version"`
+	Description   string `json:"description"`
+	Author        string `json:"author"`
+	Enabled       bool   `json:"enabled"`
+	GlobalEnabled bool   `json:"globalEnabled"`
+	Entry         string `json:"entry"`
 }
 
 type ThemeInfo struct {
@@ -71,15 +70,13 @@ type ThemeInfo struct {
 }
 
 type AppState struct {
-	AppVersion      string           `json:"appVersion"`
-	Injector        InjectorSettings `json:"injector"`
-	Plugins         []PluginInfo     `json:"plugins"`
-	Themes          []ThemeInfo      `json:"themes"`
-	ActiveThemeID   string           `json:"activeThemeId"`
-	WhatsAppURL     string           `json:"whatsappUrl"`
-	RemoteOrigin    string           `json:"remoteOrigin"`
-	Profiles        []ProfileInfo    `json:"profiles"`
-	ActiveProfileID string           `json:"activeProfileId"`
+	AppVersion    string           `json:"appVersion"`
+	Injector      InjectorSettings `json:"injector"`
+	Plugins       []PluginInfo     `json:"plugins"`
+	Themes        []ThemeInfo      `json:"themes"`
+	ActiveThemeID string           `json:"activeThemeId"`
+	WhatsAppURL   string           `json:"whatsappUrl"`
+	RemoteOrigin  string           `json:"remoteOrigin"`
 }
 
 type UpdateInfo struct {

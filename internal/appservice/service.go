@@ -24,22 +24,21 @@ const (
 )
 
 type Service struct {
-	store    *config.Store
-	plugins  *plugins.Manager
-	themes   *themes.Manager
-	updates  UpdateOperations
-	appState string
-	reload   func() error
-	profiles ProfileOperations
-	surface  func(string) error
+	store       *config.Store
+	plugins     *plugins.Manager
+	themes      *themes.Manager
+	updates     UpdateOperations
+	appState    string
+	reload      func() error
+	nativeShell nativeShellOperations
+	surface     func(string) error
 
 	mu sync.Mutex
 }
 
-type ProfileOperations interface {
-	EnsureProfile(profile model.Profile) error
-	ActivateProfile(profileID string) error
-	RemoveProfile(profileID string)
+type nativeShellOperations interface {
+	HideWhatsApp() error
+	ToggleMaximise() error
 }
 
 type UpdateOperations interface {
@@ -81,19 +80,19 @@ func NewWithReloadAndOperations(
 	themesManager *themes.Manager,
 	appState string,
 	reload func() error,
-	profileOperations ProfileOperations,
+	nativeShell nativeShellOperations,
 	surfaceOpener func(string) error,
 	updateOperations UpdateOperations,
 ) *Service {
 	return &Service{
-		store:    store,
-		plugins:  pluginsManager,
-		themes:   themesManager,
-		updates:  updateOperations,
-		appState: appState,
-		reload:   reload,
-		profiles: profileOperations,
-		surface:  surfaceOpener,
+		store:       store,
+		plugins:     pluginsManager,
+		themes:      themesManager,
+		updates:     updateOperations,
+		appState:    appState,
+		reload:      reload,
+		nativeShell: nativeShell,
+		surface:     surfaceOpener,
 	}
 }
 
@@ -176,58 +175,6 @@ func (s *Service) SetPluginEnabled(ctx context.Context, id string, enabled bool)
 			return fmt.Errorf("plugin %q is not installed", id)
 		}
 		settings.Plugins[id] = model.PluginState{Enabled: enabled}
-		return nil
-	})
-}
-
-func (s *Service) SetPluginEnabledForProfile(ctx context.Context, profileID, id string, enabled bool) error {
-	if err := requireControlWindow(ctx); err != nil {
-		return err
-	}
-	if err := validateID(id); err != nil {
-		return err
-	}
-	if err := validateProfileID(profileID); err != nil {
-		return err
-	}
-	return s.updateSettings(func(settings *model.Settings) error {
-		if _, ok := settings.Profiles[profileID]; !ok {
-			return fmt.Errorf("profile %q was not found", profileID)
-		}
-		installed, err := s.pluginInstalled(*settings, id)
-		if err != nil {
-			return err
-		}
-		if !installed {
-			return fmt.Errorf("plugin %q is not installed", id)
-		}
-		profile := settings.Profiles[profileID]
-		if profile.PluginOverrides == nil {
-			profile.PluginOverrides = map[string]bool{}
-		}
-		profile.PluginOverrides[id] = enabled
-		settings.Profiles[profileID] = profile
-		return nil
-	})
-}
-
-func (s *Service) ClearPluginOverride(ctx context.Context, profileID, id string) error {
-	if err := requireControlWindow(ctx); err != nil {
-		return err
-	}
-	if err := validateID(id); err != nil {
-		return err
-	}
-	if err := validateProfileID(profileID); err != nil {
-		return err
-	}
-	return s.updateSettings(func(settings *model.Settings) error {
-		profile, ok := settings.Profiles[profileID]
-		if !ok {
-			return fmt.Errorf("profile %q was not found", profileID)
-		}
-		delete(profile.PluginOverrides, id)
-		settings.Profiles[profileID] = profile
 		return nil
 	})
 }
@@ -320,6 +267,11 @@ func (s *Service) HideWindow(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if handled, err := s.runNativeShellOperation(window, func(operations nativeShellOperations) error {
+		return operations.HideWhatsApp()
+	}); handled {
+		return err
+	}
 	window.Hide()
 	return nil
 }
@@ -327,6 +279,11 @@ func (s *Service) HideWindow(ctx context.Context) error {
 func (s *Service) ToggleMaximise(ctx context.Context) error {
 	window, err := callerWindow(ctx)
 	if err != nil {
+		return err
+	}
+	if handled, err := s.runNativeShellOperation(window, func(operations nativeShellOperations) error {
+		return operations.ToggleMaximise()
+	}); handled {
 		return err
 	}
 	window.ToggleMaximise()
@@ -338,8 +295,20 @@ func (s *Service) RequestClose(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	window.Close()
+	if handled, err := s.runNativeShellOperation(window, func(operations nativeShellOperations) error {
+		return operations.HideWhatsApp()
+	}); handled {
+		return err
+	}
+	window.Hide()
 	return nil
+}
+
+func (s *Service) runNativeShellOperation(window application.Window, operation func(nativeShellOperations) error) (bool, error) {
+	if window == nil || window.Name() != controlWindowName || s.nativeShell == nil {
+		return false, nil
+	}
+	return true, operation(s.nativeShell)
 }
 
 func (s *Service) ReloadWhatsApp(ctx context.Context) error {
@@ -368,187 +337,6 @@ func (s *Service) OpenSurface(ctx context.Context, surface string) error {
 	return opener(surface)
 }
 
-func (s *Service) GetProfileState(ctx context.Context, profileID string) (model.AppState, error) {
-	if err := requireControlWindow(ctx); err != nil {
-		return model.AppState{}, err
-	}
-	if err := validateProfileID(profileID); err != nil {
-		return model.AppState{}, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	settings := s.store.Snapshot()
-	if _, ok := settings.Profiles[profileID]; !ok {
-		return model.AppState{}, fmt.Errorf("profile %q was not found", profileID)
-	}
-	settings.ActiveProfileID = profileID
-	return s.stateFromSettings(settings)
-}
-
-func (s *Service) CreateProfile(ctx context.Context, name string) (model.ProfileInfo, error) {
-	if err := requireControlWindow(ctx); err != nil {
-		return model.ProfileInfo{}, err
-	}
-	name, err := normalizeProfileName(name)
-	if err != nil {
-		return model.ProfileInfo{}, err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	settings := s.store.Snapshot()
-	id := nextProfileID(settings, name)
-	profile := model.Profile{
-		ID:              id,
-		Name:            name,
-		Accent:          nextProfileAccent(settings),
-		PluginOverrides: map[string]bool{},
-	}
-	updated, err := s.store.Update(func(next *model.Settings) error {
-		next.Profiles[id] = profile
-		next.ProfileOrder = append(next.ProfileOrder, id)
-		return nil
-	})
-	if err != nil {
-		return model.ProfileInfo{}, err
-	}
-	if s.profiles != nil {
-		if err := s.profiles.EnsureProfile(profile); err != nil {
-			_, _ = s.store.Update(func(next *model.Settings) error {
-				delete(next.Profiles, id)
-				next.ProfileOrder = removeProfileID(next.ProfileOrder, id)
-				if next.ActiveProfileID == id {
-					next.ActiveProfileID = model.DefaultProfileID
-				}
-				return nil
-			})
-			return model.ProfileInfo{}, fmt.Errorf("prepare profile %q: %w", name, err)
-		}
-	}
-	created := updated.Profiles[id]
-	return model.ProfileInfo{ID: created.ID, Name: created.Name, Accent: created.Accent}, nil
-}
-
-func (s *Service) RenameProfile(ctx context.Context, profileID, name string) error {
-	if err := requireControlWindow(ctx); err != nil {
-		return err
-	}
-	if err := validateProfileID(profileID); err != nil {
-		return err
-	}
-	name, err := normalizeProfileName(name)
-	if err != nil {
-		return err
-	}
-	return s.updateSettings(func(settings *model.Settings) error {
-		profile, ok := settings.Profiles[profileID]
-		if !ok {
-			return fmt.Errorf("profile %q was not found", profileID)
-		}
-		profile.Name = name
-		settings.Profiles[profileID] = profile
-		return nil
-	})
-}
-
-func (s *Service) SelectProfile(ctx context.Context, profileID string) error {
-	if err := requireControlWindow(ctx); err != nil {
-		return err
-	}
-	if err := validateProfileID(profileID); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	settings := s.store.Snapshot()
-	if _, ok := settings.Profiles[profileID]; !ok {
-		return fmt.Errorf("profile %q was not found", profileID)
-	}
-	previousID := settings.ActiveProfileID
-	if previousID == profileID {
-		if s.profiles != nil {
-			return s.profiles.ActivateProfile(profileID)
-		}
-		return nil
-	}
-	if _, err := s.store.Update(func(next *model.Settings) error {
-		next.ActiveProfileID = profileID
-		return nil
-	}); err != nil {
-		return err
-	}
-	if s.profiles != nil {
-		if err := s.profiles.ActivateProfile(profileID); err != nil {
-			_, _ = s.store.Update(func(next *model.Settings) error {
-				next.ActiveProfileID = previousID
-				return nil
-			})
-			return fmt.Errorf("activate profile %q: %w", profileID, err)
-		}
-	}
-	return nil
-}
-
-func (s *Service) DeleteProfile(ctx context.Context, profileID string) error {
-	if err := requireControlWindow(ctx); err != nil {
-		return err
-	}
-	if err := validateProfileID(profileID); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	settings := s.store.Snapshot()
-	if len(settings.Profiles) <= 1 {
-		return errors.New("at least one WhatsApp profile must remain")
-	}
-	if _, ok := settings.Profiles[profileID]; !ok {
-		return fmt.Errorf("profile %q was not found", profileID)
-	}
-	nextActiveID := settings.ActiveProfileID
-	if nextActiveID == profileID {
-		for _, candidate := range settings.ProfileOrder {
-			if candidate != profileID {
-				nextActiveID = candidate
-				break
-			}
-		}
-		if _, err := s.store.Update(func(next *model.Settings) error {
-			next.ActiveProfileID = nextActiveID
-			return nil
-		}); err != nil {
-			return err
-		}
-		if s.profiles != nil {
-			if err := s.profiles.ActivateProfile(nextActiveID); err != nil {
-				_, _ = s.store.Update(func(next *model.Settings) error {
-					next.ActiveProfileID = profileID
-					return nil
-				})
-				return fmt.Errorf("activate fallback profile: %w", err)
-			}
-		}
-	}
-
-	if _, err := s.store.Update(func(next *model.Settings) error {
-		delete(next.Profiles, profileID)
-		next.ProfileOrder = removeProfileID(next.ProfileOrder, profileID)
-		return nil
-	}); err != nil {
-		return err
-	}
-	if s.profiles != nil {
-		s.profiles.RemoveProfile(profileID)
-	}
-	return nil
-}
-
 func (s *Service) OpenPluginProject(ctx context.Context, id string) (string, error) {
 	if err := requireControlWindow(ctx); err != nil {
 		return "", err
@@ -570,6 +358,16 @@ func (s *Service) OpenPluginProject(ctx context.Context, id string) (string, err
 	return projectPath, nil
 }
 
+func (s *Service) CreatePluginTemplate(ctx context.Context, name string) (string, error) {
+	if err := requireControlWindow(ctx); err != nil {
+		return "", err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.plugins.CreateTemplate(name)
+}
+
 func (s *Service) stateLocked() (model.AppState, error) {
 	settings := s.store.Snapshot()
 	return s.stateFromSettings(settings)
@@ -585,15 +383,13 @@ func (s *Service) stateFromSettings(settings model.Settings) (model.AppState, er
 		return model.AppState{}, err
 	}
 	return model.AppState{
-		AppVersion:      s.appState,
-		Injector:        settings.Injector,
-		Plugins:         pluginsList,
-		Themes:          themesList,
-		ActiveThemeID:   settings.ActiveThemeID,
-		WhatsAppURL:     settings.WhatsAppURL,
-		RemoteOrigin:    desktop.RemoteOrigin(),
-		Profiles:        config.ProfileInfos(settings),
-		ActiveProfileID: settings.ActiveProfileID,
+		AppVersion:    s.appState,
+		Injector:      settings.Injector,
+		Plugins:       pluginsList,
+		Themes:        themesList,
+		ActiveThemeID: settings.ActiveThemeID,
+		WhatsAppURL:   settings.WhatsAppURL,
+		RemoteOrigin:  desktop.RemoteOrigin(),
 	}, nil
 }
 
@@ -656,75 +452,6 @@ func validateID(id string) error {
 		return errors.New("extension id is required")
 	}
 	return nil
-}
-
-func validateProfileID(id string) error {
-	if id == "" {
-		return errors.New("profile id is required")
-	}
-	for index, char := range id {
-		if char >= 'a' && char <= 'z' ||
-			char >= '0' && char <= '9' ||
-			char == '-' || char == '_' || char == '.' {
-			if index == 0 && char == '-' {
-				return errors.New("profile id is invalid")
-			}
-			continue
-		}
-		return errors.New("profile id is invalid")
-	}
-	return nil
-}
-
-func normalizeProfileName(name string) (string, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "", errors.New("profile name is required")
-	}
-	if len([]rune(name)) > 80 {
-		return "", errors.New("profile name is too long")
-	}
-	return name, nil
-}
-
-func nextProfileID(settings model.Settings, name string) string {
-	var builder strings.Builder
-	lastDash := false
-	for _, char := range strings.ToLower(name) {
-		switch {
-		case char >= 'a' && char <= 'z' || char >= '0' && char <= '9':
-			builder.WriteRune(char)
-			lastDash = false
-		case !lastDash && builder.Len() > 0:
-			builder.WriteByte('-')
-			lastDash = true
-		}
-	}
-	id := strings.Trim(builder.String(), "-")
-	if id == "" {
-		id = "perfil"
-	}
-	base := id
-	for suffix := 2; ; suffix++ {
-		if _, exists := settings.Profiles[id]; !exists {
-			return id
-		}
-		id = fmt.Sprintf("%s-%d", base, suffix)
-	}
-}
-
-func nextProfileAccent(settings model.Settings) string {
-	return []string{"#50e58b", "#82d9ff", "#c8a6f7", "#ffb86c", "#f5c2e7"}[len(settings.Profiles)%5]
-}
-
-func removeProfileID(ids []string, target string) []string {
-	result := make([]string, 0, len(ids)-1)
-	for _, id := range ids {
-		if id != target {
-			result = append(result, id)
-		}
-	}
-	return result
 }
 
 type windowNamer interface {

@@ -1,13 +1,13 @@
 [Desktop Entry]
 Version=1.0
-Name=My Product
-Comment=A BetterWhatsApp application
+Name=BetterWhatsApp
+Comment=Cliente desktop do WhatsApp Web com plugins e temas locais
 # The Exec line includes %u to pass the URL to the application
-Exec=/usr/local/bin/betterwhatsapp.exe %u
+Exec=/usr/local/bin/betterwhatsapp %u
 Terminal=false
 Type=Application
-Icon=betterwhatsapp.exe
+Icon=betterwhatsapp
 Categories=Utility;
-StartupWMClass=betterwhatsapp.exe
+StartupWMClass=betterwhatsapp
 
  

@@ -1319,6 +1319,14 @@ body.standalone-surface-page textarea:focus-visible {
   margin-bottom: 22px;
 }
 
+.standalone-surface-page .surface-section-heading-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .standalone-surface-page .surface-section-heading h2 {
   margin: 7px 0 0;
   color: #eaf8ed;
@@ -1474,6 +1482,13 @@ body.standalone-surface-page textarea:focus-visible {
   transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 
+.standalone-surface-page .surface-button-small {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .standalone-surface-page .surface-button:hover {
   transform: translateY(-1px);
 }
@@ -1557,7 +1572,7 @@ body.standalone-surface-page textarea:focus-visible {
 .standalone-surface-page .plugin-workspace-grid {
   display: grid;
   max-width: 1120px;
-  grid-template-columns: minmax(0, 1.03fr) minmax(340px, 0.97fr);
+  grid-template-columns: minmax(0, 1.08fr) minmax(300px, 0.92fr);
   align-items: start;
   gap: 14px;
   margin: 0 auto;
@@ -1586,11 +1601,13 @@ body.standalone-surface-page textarea:focus-visible {
 }
 
 .standalone-surface-page .plugin-card {
-  display: flex;
+  display: grid;
+  min-width: 0;
   min-height: 76px;
-  align-items: center;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
   padding: 12px;
+  overflow: hidden;
   border: 1px solid rgba(69, 123, 84, 0.3);
   border-radius: 9px;
   background: rgba(8, 20, 12, 0.73);
@@ -1607,7 +1624,7 @@ body.standalone-surface-page textarea:focus-visible {
   display: flex;
   min-width: 0;
   flex: 1;
-  align-items: center;
+  align-items: flex-start;
   gap: 11px;
 }
 
@@ -1631,41 +1648,54 @@ body.standalone-surface-page textarea:focus-visible {
   min-width: 0;
 }
 
-.standalone-surface-page .plugin-card-copy strong {
+.standalone-surface-page .plugin-card-copy h3 {
+  min-width: 0;
+  margin: 0;
   display: block;
-  overflow: hidden;
   color: #d9f0de;
   font-size: 12px;
   font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
-.standalone-surface-page .plugin-card-copy span {
+.standalone-surface-page .plugin-card-copy p {
+  min-width: 0;
+  margin: 5px 0 0;
   display: block;
-  overflow: hidden;
-  margin-top: 5px;
   color: #70927a;
   font-size: 10px;
   line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
-.standalone-surface-page .plugin-card-meta {
-  display: flex;
-  align-items: center;
-  gap: 9px;
+.standalone-surface-page .plugin-card-copy small {
+  display: block;
+  min-width: 0;
   margin-top: 5px;
   color: #54735f;
   font-family: "Cascadia Mono", Consolas, monospace;
   font-size: 8px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .standalone-surface-page .plugin-card-controls {
   display: flex;
+  width: 100%;
+  min-width: 0;
+  grid-column: 1 / -1;
   align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   gap: 10px;
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid rgba(90, 157, 112, 0.15);
+}
+
+.standalone-surface-page .plugin-card-controls .surface-button {
+  white-space: nowrap;
 }
 
 .standalone-surface-page .surface-toggle {
@@ -1985,6 +2015,7 @@ body.standalone-surface-page textarea:focus-visible {
   display: flex;
   max-width: 1120px;
   align-items: center;
+  flex-wrap: wrap;
   gap: 16px;
   margin: 0 auto 14px;
   padding: 14px 17px;
@@ -2015,7 +2046,7 @@ body.standalone-surface-page textarea:focus-visible {
 
 .standalone-surface-page .plugin-profile-select {
   display: grid;
-  flex: 0 1 230px;
+  flex: 1 1 210px;
   gap: 5px;
   min-width: 150px;
   color: #6f917a;
@@ -2066,13 +2097,14 @@ body.standalone-surface-page textarea:focus-visible {
 
 .standalone-surface-page .plugin-card-controls {
   flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
 .standalone-surface-page .plugin-override-control {
   display: grid;
+  flex: 1 1 150px;
   gap: 4px;
-  min-width: 132px;
+  min-width: 150px;
+  max-width: 220px;
   color: #6f917a;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 7px;
@@ -2104,7 +2136,99 @@ body.standalone-surface-page textarea:focus-visible {
 
   .standalone-surface-page .plugin-override-control {
     flex: 1 1 150px;
+    max-width: none;
   }
+
+  .standalone-surface-page .surface-section-heading-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+.surface-plugin-dialog-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(2, 7, 4, 0.74);
+  backdrop-filter: blur(8px);
+}
+
+.surface-plugin-dialog-backdrop[hidden] {
+  display: none;
+}
+
+.surface-plugin-dialog {
+  width: min(480px, 100%);
+  max-height: calc(100% - 40px);
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid rgba(80, 229, 139, 0.32);
+  border-radius: 12px;
+  background: #0d1a13;
+  box-shadow: 0 26px 90px rgba(0, 0, 0, 0.48);
+}
+
+.surface-plugin-dialog-heading h2 {
+  margin: 9px 0 8px;
+  color: #ecfff1;
+  font-size: 23px;
+  letter-spacing: -0.04em;
+}
+
+.surface-plugin-dialog-heading p,
+.surface-plugin-dialog-hint {
+  margin: 0 0 20px;
+  color: #86a091;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.surface-plugin-dialog-heading code,
+.surface-plugin-dialog-hint code {
+  color: #b7e9c5;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 10px;
+}
+
+.surface-plugin-field {
+  display: grid;
+  gap: 8px;
+  color: #a2bbaa;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.surface-plugin-field input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid rgba(139, 176, 157, 0.24);
+  border-radius: 7px;
+  color: #e7f2eb;
+  outline: none;
+  background: #08110c;
+  font-size: 12px;
+}
+
+.surface-plugin-field input:focus {
+  border-color: #50e58b;
+  box-shadow: 0 0 0 3px rgba(80, 229, 139, 0.1);
+}
+
+.surface-plugin-dialog-hint {
+  margin: 8px 0 0;
+  color: #668271;
+  font-size: 10px;
+}
+
+.surface-plugin-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 22px;
 }
 
 /* Main shell: the native profile WebView is embedded below this 92px header. */

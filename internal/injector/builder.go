@@ -51,14 +51,6 @@ func (b *Builder) Build(settings model.Settings) (string, error) {
 	return b.build(settings, true)
 }
 
-// BuildForProfile creates the runtime for a child WebView. The profile ID is
-// selected by the host, never by the remote page, so plugins and session data
-// are resolved against one deterministic namespace.
-func (b *Builder) BuildForProfile(settings model.Settings, profileID string) (string, error) {
-	settings.ActiveProfileID = profileID
-	return b.build(settings, false)
-}
-
 func (b *Builder) build(settings model.Settings, showToolbar bool) (string, error) {
 	if strings.TrimSpace(b.bootstrap) == "" {
 		return "", errors.New("injector bootstrap is empty")
