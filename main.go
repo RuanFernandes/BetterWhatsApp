@@ -205,11 +205,6 @@ func main() {
 				if notificationCenter != nil {
 					notificationCenter.SetUnreadCount(count)
 				}
-			}, func() {
-				if notificationCenter != nil {
-					hidden := windows == nil || windows.WhatsAppNeedsNotification()
-					notificationCenter.HandleNewMessage(hidden)
-				}
 			})
 		},
 		ErrorHandler: func(err error) {
@@ -426,7 +421,6 @@ func handleRawMessage(
 	openSurface func(string) error,
 	windowCommand func(string) error,
 	setUnreadCount func(int),
-	handleNewMessage func(),
 ) {
 	if window == nil ||
 		window.Name() != "whatsapp" ||
@@ -441,9 +435,6 @@ func handleRawMessage(
 		if count, ok := decodeUnreadCountMessage(message); ok && setUnreadCount != nil {
 			setUnreadCount(count)
 		}
-		if message == "betterwhatsapp:notifications:new-message" && handleNewMessage != nil {
-			handleNewMessage()
-		}
 		return
 	}
 
@@ -455,12 +446,6 @@ func handleRawMessage(
 	if count, ok := decodeUnreadCountMessage(message); ok {
 		if setUnreadCount != nil {
 			setUnreadCount(count)
-		}
-		return
-	}
-	if message == "betterwhatsapp:notifications:new-message" {
-		if handleNewMessage != nil {
-			handleNewMessage()
 		}
 		return
 	}

@@ -20,7 +20,6 @@ var windowUser32 = syscall.NewLazyDLL("user32.dll")
 var (
 	showWindowProc          = windowUser32.NewProc("ShowWindow")
 	isZoomedProc            = windowUser32.NewProc("IsZoomed")
-	isIconicProc            = windowUser32.NewProc("IsIconic")
 	isWindowVisibleProc     = windowUser32.NewProc("IsWindowVisible")
 	setForegroundWindowProc = windowUser32.NewProc("SetForegroundWindow")
 )
@@ -31,14 +30,6 @@ func nativeWindowVisible(hwnd uintptr) bool {
 	}
 	visible, _, _ := isWindowVisibleProc.Call(hwnd)
 	return visible != 0
-}
-
-func nativeWindowMinimised(hwnd uintptr) bool {
-	if hwnd == 0 {
-		return false
-	}
-	minimised, _, _ := isIconicProc.Call(hwnd)
-	return minimised != 0
 }
 
 func focusNativeWindow(hwnd uintptr) {

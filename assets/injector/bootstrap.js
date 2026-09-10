@@ -402,7 +402,6 @@
         /^betterwhatsapp:window:(?:hide|maximise|close|reload)$/.test(message) ||
         message === "betterwhatsapp:surface:plugins" ||
         message === "betterwhatsapp:surface:themes" ||
-        message === "betterwhatsapp:notifications:new-message" ||
         /^betterwhatsapp:notifications:unread:\d{1,6}$/.test(message) ||
         /^betterwhatsapp:settings:(?:injector:[01]|plugin:[a-z0-9][a-z0-9._-]{0,63}:[01]|theme:[a-z0-9][a-z0-9._-]{0,63}:[01])$/.test(message) ||
         isAllowedThemeMessage(message)
@@ -1045,7 +1044,6 @@
     let refreshTimer = 0;
     let refreshInFlight = false;
     let refreshQueued = false;
-    let baselineLoaded = false;
 
     const publishUnreadCount = (value) => {
       const numericValue = Number(value);
@@ -1088,7 +1086,6 @@
       refreshInFlight = true;
       try {
         await readUnreadCount();
-        baselineLoaded = true;
       } catch (error) {
         log("unread count refresh failed", error);
       } finally {
@@ -1115,9 +1112,6 @@
       wpp.on("chat.new_message", (message) => {
         const fromMe = message?.fromMe === true || message?.id?.fromMe === true;
         if (!fromMe && message?.isNotification !== true) {
-          if (baselineLoaded) {
-            sendNativeMessage("betterwhatsapp:notifications:new-message");
-          }
           scheduleRefresh();
         }
       });

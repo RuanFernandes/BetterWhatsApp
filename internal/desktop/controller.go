@@ -203,15 +203,6 @@ func (c *Controller) NativeHandle() uintptr {
 	return c.windowHandleLocked()
 }
 
-// WhatsAppNeedsNotification reads only native window state and is safe to use
-// from the remote page message callback.
-func (c *Controller) WhatsAppNeedsNotification() bool {
-	c.mu.Lock()
-	hwnd := c.windowHandleLocked()
-	c.mu.Unlock()
-	return hwnd == 0 || !nativeWindowVisible(hwnd) || nativeWindowMinimised(hwnd)
-}
-
 func (c *Controller) Quit() {
 	c.closeAllowed.Store(true)
 	c.Close()

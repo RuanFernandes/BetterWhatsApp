@@ -4,12 +4,9 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
-
-const notificationSoundCooldown = 2 * time.Second
 
 type NotificationCenter struct {
 	mu sync.Mutex
@@ -19,7 +16,6 @@ type NotificationCenter struct {
 	normalIcon      []byte
 	unreadIcon      []byte
 	unreadCount     int
-	lastSoundAt     time.Time
 	asyncReady      atomic.Bool
 	applyPending    bool
 	pendingSnapshot *notificationSnapshot
@@ -76,23 +72,6 @@ func (n *NotificationCenter) SetUnreadCount(count int) {
 	n.mu.Unlock()
 
 	n.enqueueApply(snapshot)
-}
-
-func (n *NotificationCenter) HandleNewMessage(hidden bool) {
-	if n == nil || !hidden {
-		return
-	}
-
-	now := time.Now()
-	n.mu.Lock()
-	if !n.lastSoundAt.IsZero() && now.Sub(n.lastSoundAt) < notificationSoundCooldown {
-		n.mu.Unlock()
-		return
-	}
-	n.lastSoundAt = now
-	n.mu.Unlock()
-
-	go playNotificationSound()
 }
 
 func (n *NotificationCenter) snapshotLocked() notificationSnapshot {
