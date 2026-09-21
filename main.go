@@ -424,9 +424,7 @@ func handleRawMessage(
 ) {
 	if window == nil ||
 		window.Name() != "whatsapp" ||
-		originInfo == nil ||
-		!isTrustedRemoteOrigin(originInfo.Origin) ||
-		!isTrustedRemoteOrigin(originInfo.TopOrigin) ||
+		!isTrustedRemoteMessageOrigin(originInfo) ||
 		len(message) > maxRawMessageSize {
 		return
 	}
@@ -654,6 +652,16 @@ func isTrustedRemoteOrigin(value string) bool {
 
 	port := parsed.Port()
 	return port == "" || port == "443"
+}
+
+func isTrustedRemoteMessageOrigin(info *application.OriginInfo) bool {
+	if info == nil || !isTrustedRemoteOrigin(info.Origin) {
+		return false
+	}
+
+	// WebKitGTK provides the current document URI as Origin but does not
+	// populate TopOrigin. When it is available (WebView2), validate it too.
+	return strings.TrimSpace(info.TopOrigin) == "" || isTrustedRemoteOrigin(info.TopOrigin)
 }
 
 func parseCommandBool(value string) (bool, bool) {

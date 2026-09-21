@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
+)
 
 func TestIsTrustedRemoteOrigin(t *testing.T) {
 	tests := []struct {
@@ -23,6 +27,54 @@ func TestIsTrustedRemoteOrigin(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := isTrustedRemoteOrigin(test.value); got != test.trusted {
 				t.Fatalf("isTrustedRemoteOrigin(%q) = %v, want %v", test.value, got, test.trusted)
+			}
+		})
+	}
+}
+
+func TestIsTrustedRemoteMessageOrigin(t *testing.T) {
+	tests := []struct {
+		name string
+		info *application.OriginInfo
+		want bool
+	}{
+		{
+			name: "webkit origin without top origin",
+			info: &application.OriginInfo{Origin: "https://web.whatsapp.com/app"},
+			want: true,
+		},
+		{
+			name: "webview2 origins",
+			info: &application.OriginInfo{
+				Origin:    "https://web.whatsapp.com/app",
+				TopOrigin: "https://web.whatsapp.com/app",
+			},
+			want: true,
+		},
+		{
+			name: "untrusted sender",
+			info: &application.OriginInfo{Origin: "https://evil.example"},
+			want: false,
+		},
+		{
+			name: "untrusted top origin",
+			info: &application.OriginInfo{
+				Origin:    "https://web.whatsapp.com/app",
+				TopOrigin: "https://evil.example",
+			},
+			want: false,
+		},
+		{
+			name: "missing origin info",
+			info: nil,
+			want: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isTrustedRemoteMessageOrigin(test.info); got != test.want {
+				t.Fatalf("isTrustedRemoteMessageOrigin(%+v) = %v, want %v", test.info, got, test.want)
 			}
 		})
 	}
