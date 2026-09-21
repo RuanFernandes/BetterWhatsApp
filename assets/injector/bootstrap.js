@@ -341,11 +341,16 @@
 
   const installWailsBridgeGuard = () => {
     let nativePostMessage = null;
+    const runtimeBridge = window._wails;
+    const runtimeInvoke =
+      runtimeBridge && typeof runtimeBridge.invoke === "function"
+        ? runtimeBridge.invoke.bind(runtimeBridge)
+        : null;
     const maxThemeMessageLength = 2 * 1024 * 1024 + 64 * 1024;
     const getWebviewPostMessage = () => {
       const webview = window.chrome?.webview;
       if (!webview || typeof webview.postMessage !== "function") {
-        return null;
+        return runtimeInvoke;
       }
       return webview.postMessage.bind(webview);
     };

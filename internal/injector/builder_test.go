@@ -1,12 +1,30 @@
 package injector
 
 import (
+	"os"
 	"strings"
 	"testing"
 
 	"betterwhatsapp/internal/config"
 	"betterwhatsapp/internal/model"
 )
+
+func TestBootstrapUsesWailsRuntimeBridgeOnLinux(t *testing.T) {
+	source, err := os.ReadFile("../../assets/injector/bootstrap.js")
+	if err != nil {
+		t.Fatalf("read bootstrap: %v", err)
+	}
+
+	if !strings.Contains(string(source), "const runtimeBridge = window._wails") {
+		t.Fatal("bootstrap does not capture the Wails runtime bridge for non-WebView2 platforms")
+	}
+	if !strings.Contains(string(source), "runtimeBridge.invoke.bind(runtimeBridge)") {
+		t.Fatal("bootstrap does not use the Wails runtime invoke transport")
+	}
+	if !strings.Contains(string(source), "return runtimeInvoke;") {
+		t.Fatal("bootstrap does not fall back to the Wails runtime transport when WebView2 is unavailable")
+	}
+}
 
 func testControlAssets() ControlAssets {
 	return ControlAssets{
