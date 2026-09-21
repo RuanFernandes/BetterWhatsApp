@@ -236,8 +236,8 @@ func main() {
 	whatsappReady.Store(true)
 	wailsApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
 		// Wails creates pending windows asynchronously. Showing the native
-		// container here is safe because OpenWhatsApp uses only Win32 calls;
-		// it does not enter the WebView2 dispatcher while startup is settling.
+		// container here is safe because OpenWhatsApp uses Wails' synchronous
+		// cross-platform window API while startup is settling.
 		openShellWhenReady()
 		if secondInstancePending.Swap(false) {
 			openShellWhenReady()

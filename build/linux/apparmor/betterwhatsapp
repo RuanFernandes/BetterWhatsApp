@@ -1,0 +1,11 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+# WebKitGTK uses bubblewrap for its web-process sandbox. Ubuntu 24.04
+# restricts unprivileged user namespaces unless the launching application has
+# an AppArmor profile that explicitly permits them.
+profile betterwhatsapp /usr/local/bin/betterwhatsapp flags=(unconfined) {
+  userns,
+
+  include if exists <local/betterwhatsapp>
+}

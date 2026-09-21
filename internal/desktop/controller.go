@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"unsafe"
 
 	"betterwhatsapp/internal/model"
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -73,50 +72,61 @@ func (c *Controller) CreateShellWindow(settings model.Settings) error {
 
 func (c *Controller) OpenWhatsApp() error {
 	c.mu.Lock()
-	hwnd := c.windowHandleLocked()
+	window := c.window
 	c.mu.Unlock()
-	if hwnd == 0 {
+	if window == nil {
 		return errors.New("BetterWhatsApp native window is not ready")
 	}
-	showNativeWindow(hwnd)
+	window.Show()
+	window.Focus()
 	return nil
 }
 
 func (c *Controller) HideWhatsApp() error {
 	c.mu.Lock()
-	hwnd := c.windowHandleLocked()
+	window := c.window
 	c.mu.Unlock()
-	if hwnd == 0 {
+	if window == nil {
 		return errors.New("BetterWhatsApp native window is not ready")
 	}
-	hideNativeWindow(hwnd)
+	window.Hide()
 	return nil
 }
 
 func (c *Controller) ToggleWhatsApp() error {
 	c.mu.Lock()
-	hwnd := c.windowHandleLocked()
+	window := c.window
 	c.mu.Unlock()
-	if hwnd == 0 {
+	if window == nil {
 		return errors.New("BetterWhatsApp native window is not ready")
 	}
-	if nativeWindowVisible(hwnd) {
-		hideNativeWindow(hwnd)
+	if window.IsVisible() {
+		window.Hide()
 	} else {
-		showNativeWindow(hwnd)
+		window.Show()
+		window.Focus()
 	}
 	return nil
 }
 
 func (c *Controller) ToggleMaximise() error {
 	c.mu.Lock()
-	hwnd := c.windowHandleLocked()
+	window := c.window
 	c.mu.Unlock()
-	return toggleNativeMaximise(hwnd)
+	if window == nil {
+		return errors.New("BetterWhatsApp native window is not ready")
+	}
+	if window.IsMaximised() {
+		window.UnMaximise()
+	} else {
+		window.Maximise()
+	}
+	return nil
 }
 
 // HandleWindowCommand is used by the injected toolbar so window operations go
-// through the native handle and never block the remote WebView message path.
+// through Wails' cross-platform window API and never block the remote WebView
+// message path.
 func (c *Controller) HandleWindowCommand(command string) error {
 	switch command {
 	case "hide", "close":
@@ -146,14 +156,13 @@ func (c *Controller) ReloadWhatsApp(settings model.Settings) error {
 
 	c.mu.Lock()
 	window := c.window
-	hwnd := c.windowHandleLocked()
-	visible := hwnd == 0 || nativeWindowVisible(hwnd)
 	c.window = nil
 	c.mu.Unlock()
 	if window == nil {
 		c.reloadQueued.Store(false)
 		return errors.New("BetterWhatsApp window is not initialized")
 	}
+	visible := window.IsVisible()
 
 	go func() {
 		defer c.reloadQueued.Store(false)
@@ -200,7 +209,12 @@ func (c *Controller) Window() application.Window {
 func (c *Controller) NativeHandle() uintptr {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.windowHandleLocked()
+	if c.window == nil {
+		return 0
+	}
+	// Kept as a readiness check for startup coordination. Window operations
+	// use Wails' cross-platform API rather than a native handle.
+	return 1
 }
 
 func (c *Controller) Quit() {
@@ -280,15 +294,7 @@ func showWindow(window *application.WebviewWindow) {
 		return
 	}
 	window.Show()
-	window.Show()
-	focusNativeWindow(nativeWindowHandle(window))
-}
-
-func (c *Controller) windowHandleLocked() uintptr {
-	if c.window == nil {
-		return 0
-	}
-	return nativeWindowHandle(c.window)
+	window.Focus()
 }
 
 func (c *Controller) installCloseToTrayHook(window *application.WebviewWindow) {
@@ -297,7 +303,7 @@ func (c *Controller) installCloseToTrayHook(window *application.WebviewWindow) {
 			return
 		}
 		event.Cancel()
-		hideNativeWindow(nativeWindowHandle(window))
+		window.Hide()
 	}
 	window.RegisterHook(events.Windows.WindowClosing, closeToTray)
 	window.RegisterHook(events.Common.WindowClosing, closeToTray)
@@ -345,13 +351,6 @@ func redirectHTML(remoteURL string) string {
 	return "<!doctype html><html><head><meta charset=\"utf-8\"></head><body><script>location.replace(" +
 		strconv.Quote(remoteURL) +
 		");</script></body></html>"
-}
-
-func nativeWindowHandle(window application.Window) uintptr {
-	if window == nil {
-		return 0
-	}
-	return uintptr(unsafe.Pointer(window.NativeWindow()))
 }
 
 func RemoteOrigin() string {
